@@ -1,29 +1,66 @@
-main.py is based on the bellow paper by Google Research: https://arxiv.org/pdf/2501.00663v1
+# TitanRAG
 
+Implementation of **Titans: Learning to Memorize at Test Time** (arXiv:2501.00663).
 
-Titans: Learning to Memorize at Test Time
+This project explores the **Titans** architecture, a next-generation neural memory system that learns to memorize historical context *at inference time* (Test-Time Training). We extend this concept to **Retrieval-Augmented Generation (RAG)**, creating a hybrid neuro-symbolic system that "digests" retrieved documents into long-term memory weights.
 
-Over more than a decade there has been an extensive research effort of how effectively utilize recurrent models and
-attentions. While recurrent models aim to compress the data into a fixed-size memory (called hidden state), attention allows
-attending to the entire context window, capturing the direct dependencies of all tokens. This more accurate modeling
-of dependencies, however, comes with a quadratic cost, limiting the model to a fixed-length context. We present a new
-neural long-term memory module that learns to memorize historical context and helps an attention to attend to the
-current context while utilizing long past information. We show that this neural memory has the advantage of a fast
-parallelizable training while maintaining a fast inference. From a memory perspective, we argue that attention due to its
-limited context but accurate dependency modeling performs as a short-term memory, while neural memory due to its
-ability to memorize the data, acts as a long-term, more persistent, memory. Based on these two modules, we introduce
-a new family of architectures, called Titans, and present three variants to address how one can effectively incorporate
-memory into this architecture. Our experimental results on language modeling, common-sense reasoning, genomics,
-and time series tasks show that Titans are more effective than Transformers and recent modern linear recurrent models.
-They further can effectively scale to larger than 2M context window size with higher accuracy in needle-in-haystack tasks
-compared to baselines.
+## 🚀 Key Features
 
-In this paper, we present a neural long-term memory that, as a meta in-context learner, learns to memorize at test time.
-The neural memory module is a recurrent model in nature, and is adaptively memorizing tokens that are more surprising
-or are close to surprising tokens. Comparing to modern recurrent models, it has more expressive memory update and
-storing mechanism. Using this memory, we present Titans architectures, and its three variants, in which we suggest to
-incorporate the memory module as (1) a context, (2) gating, and (3) a layer. Our experimental evaluation on diverse tasks
-tasks validate that Titans are more effective than Transformers and recent modern linear recurrent models, specifically for
-long context. That is, Titans can scale to larger than 2M context window size with better accuracy than baselines.
-Titans are implemented in Pytorch and JAX and we intend to make the code we used to train and evaluate our models
-available soon.
+*   **Test-Time Training (TTT)**: The `DeepMemoryModule` updates its weights on-the-fly during inference based on "surprise" (prediction error), allowing it to adaptively memorize new information.
+*   **Titans Variants**: Full implementation of all three architectural variants:
+    *   **MAC (Memory As Context)**: Prepends retrieved memory to the context window (RAG-style).
+    *   **MAG (Memory As Gating)**: Fuses Short-Term Attention and Long-Term Memory via a learned gate.
+    *   **MAL (Memory As Layer)**: Processes tokens sequentially through memory before attention.
+*   **TitanRAG**: A specialized wrapper for RAG tasks. It "reads" retrieved documents by training on them for a few epochs before answering questions, effectively "baking" knowledge into the neural weights.
+*   **Hybrid Retrieval**: Combines **Keyword Search** + **Neural Memory Search** + **Embedding Search** (Ensemble Fusion) for robust context retrieval.
+
+## 📂 Directory Structure
+
+```
+TitanRAG
+├── src/                # Core Source Code
+│   └── main.py         # Titans Model Implementation (DeepMemoryModule, TitanMAC/MAG/MAL)
+├── data/               # Data and Assets
+│   └── sample_essays.py # Sample essays for experiments
+├── projects/           # Demos and Experiments
+│   ├── hybrid_titans/  # Hybrid RAG Experiments (TitanRAG + Flan-T5)
+│   └── original_benchmarks/ # Basic functionality tests
+├── scripts/            # Utility Scripts
+│   ├── generate_notebook_script.py # Generates Colab notebook
+│   └── Titan_Colab_Runner.py
+├── docs/               # Documentation
+│   ├── Research_Directions.md
+│   ├── TitanRAG_Research_Plan_CN.md
+│   └── Walkthrough_Threshold.md
+└── notebooks/          # Processed Notebooks
+    └── Titan_Experiment.ipynb
+```
+
+## 🛠️ Quick Start (VS Code & Colab)
+
+To run the experiments using the self-contained notebook:
+
+1.  **Setup VS Code**: Install the **Colab** (or Jupyter) extension in VS Code.
+2.  **Generate Notebook**: Run the following script to generate the self-contained experiment notebook:
+    ```bash
+    python scripts/generate_notebook_script.py
+    ```
+    This will generate `Titan_Experiment.ipynb`.
+3.  **Run**: Open `Titan_Experiment.ipynb` in VS Code (or upload to Google Colab) and run all cells. The notebook automates environment setup and experiment execution.
+    > **Important**: If you modify any source code locally, you must:
+    > 1. Re-run `python scripts/generate_notebook_script.py` to update the notebook.
+    > 2. In Colab/VS Code, re-run the **"Setup File System"** cell (or restart the kernel) to propagate changes to the environment.
+
+> **Note**: You can also run locally using the scripts in `projects/`, but you will need a CUDA-ready environment with `deepspeed` installed.
+
+## 🔬 Research & Experiments
+
+*   **[Research Plan (CN)](docs/TitanRAG_Research_Plan_CN.md)**: Detailed roadmap for investigating TitanRAG.
+*   **[Walkthrough: Sparse Update](docs/Walkthrough_Threshold.md)**: Analysis of using a "Surprise Threshold" to skip redundant memory updates.
+*   **[Research Directions](docs/Research_Directions.md)**: Future ideas including Meta-Optimization and Hierarchical Memory.
+
+## 📄 Reference
+Based on the paper:
+**Titans: Learning to Memorize at Test Time**
+*Google Research*
+[https://arxiv.org/pdf/2501.00663v1](https://arxiv.org/pdf/2501.00663v1)

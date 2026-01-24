@@ -3,7 +3,7 @@ Hybrid Titan Demo: TitanRAG Retrieval + FLAN-T5 Generation
 
 This experiment demonstrates Direction A from the research plan:
 - TitanRAG: Performs semantic retrieval using Memory + Ensemble Fusion
-- GPT-2: Generates natural language answers based on retrieved context
+- Flan-T5-2: Generates natural language answers based on retrieved context
 
 Architecture:
     Question → TitanRAG → Context → FLAN-T5-Large → Answer
@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src'))
 
 from main import TitanRAG
-from sample_essays import ESSAY_CLIMATE, ESSAY_AI, ESSAY_SPACE, TEST_QUESTIONS
+from data.sample_essays import ESSAY_CLIMATE, ESSAY_AI, ESSAY_SPACE, TEST_QUESTIONS
 
 
 class SentenceTransformerEmbedder(nn.Module):
@@ -60,7 +60,7 @@ class HybridTitanRAG(nn.Module):
     
     This combines:
     1. TitanRAG for semantic memory-based retrieval
-    2. External LLM (GPT-2) for answer generation
+    2. External LLM (Flan-T5-2) for answer generation
     """
     
     def __init__(self, titan_rag, embedder, llm_name="google/flan-t5-large"):
@@ -68,7 +68,7 @@ class HybridTitanRAG(nn.Module):
         self.titan_rag = titan_rag
         self.embedder = embedder
         
-        # Load Flan-T5 for generation (better instruction following than GPT-2)
+        # Load Flan-T5 for generation (better instruction following than Flan-T5-2)
         from transformers import T5ForConditionalGeneration, T5Tokenizer
         self.tokenizer = T5Tokenizer.from_pretrained(llm_name)
         self.llm = T5ForConditionalGeneration.from_pretrained(llm_name)
@@ -230,7 +230,7 @@ def run_hybrid_titan_demo(args):
     
     print("=" * 60)
     print("HYBRID TITAN DEMO")
-    print("TitanRAG Retrieval + GPT-2 Generation")
+    print("TitanRAG Retrieval + Flan-T5-2 Generation")
     print("=" * 60)
     
     # Select essay based on argument
