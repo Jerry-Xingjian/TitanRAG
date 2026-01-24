@@ -27,7 +27,7 @@ def get_b64_safe(path):
 ar_b64 = get_b64_safe("projects/original_benchmarks/associative_recall.py")
 train_b64 = get_b64_safe("projects/original_benchmarks/train_toy.py")
 rag_b64 = get_b64_safe("projects/hybrid_titans/rag_compare.py")
-essays_b64 = get_b64_safe("projects/hybrid_titans/sample_essays.py")
+essays_b64 = get_b64_safe("data/sample_essays.py")
 essay_demo_b64 = get_b64_safe("projects/hybrid_titans/essay_rag_demo.py")
 hybrid_titan_b64 = get_b64_safe("projects/hybrid_titans/hybrid_titan_demo.py")
 
@@ -87,7 +87,7 @@ setup_code = [
     f"    'projects/original_benchmarks/associative_recall.py': '{ar_b64}',\n",
     f"    'projects/original_benchmarks/train_toy.py': '{train_b64}',\n",
     f"    'projects/hybrid_titans/rag_compare.py': '{rag_b64}',\n",
-    f"    'projects/hybrid_titans/sample_essays.py': '{essays_b64}',\n",
+    f"    'data/sample_essays.py': '{essays_b64}',\n",
     f"    'projects/hybrid_titans/essay_rag_demo.py': '{essay_demo_b64}',\n",
     f"    'projects/hybrid_titans/hybrid_titan_demo.py': '{hybrid_titan_b64}'\n",
     "}\n",

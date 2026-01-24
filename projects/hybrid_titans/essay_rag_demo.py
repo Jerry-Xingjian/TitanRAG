@@ -21,7 +21,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src'))
 
 from main import TitanMAC, TitanMAG, TitanRAG
-from sample_essays import get_all_essays, get_test_questions
+from data.sample_essays import get_all_essays, get_test_questions
 
 # ============================================================================
 # Text Embedding (Simplified)

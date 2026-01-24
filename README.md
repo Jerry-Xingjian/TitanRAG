@@ -17,9 +17,11 @@ This project explores the **Titans** architecture, a next-generation neural memo
 ## 📂 Directory Structure
 
 ```
-d:\TitanRAG\TitanRAG\
+TitanRAG
 ├── src/                # Core Source Code
 │   └── main.py         # Titans Model Implementation (DeepMemoryModule, TitanMAC/MAG/MAL)
+├── data/               # Data and Assets
+│   └── sample_essays.py # Sample essays for experiments
 ├── projects/           # Demos and Experiments
 │   ├── hybrid_titans/  # Hybrid RAG Experiments (TitanRAG + Flan-T5)
 │   └── original_benchmarks/ # Basic functionality tests
@@ -45,6 +47,9 @@ To run the experiments using the self-contained notebook:
     ```
     This will generate `Titan_Experiment.ipynb`.
 3.  **Run**: Open `Titan_Experiment.ipynb` in VS Code (or upload to Google Colab) and run all cells. The notebook automates environment setup and experiment execution.
+    > **Important**: If you modify any source code locally, you must:
+    > 1. Re-run `python scripts/generate_notebook_script.py` to update the notebook.
+    > 2. In Colab/VS Code, re-run the **"Setup File System"** cell (or restart the kernel) to propagate changes to the environment.
 
 > **Note**: You can also run locally using the scripts in `projects/`, but you will need a CUDA-ready environment with `deepspeed` installed.
 
