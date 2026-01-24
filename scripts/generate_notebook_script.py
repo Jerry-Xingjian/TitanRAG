@@ -357,7 +357,32 @@ notebook = {
     "nbformat_minor": 4
 }
 
-with open("Titan_Experiment.ipynb", "w") as f:
+output_dir = "notebooks"
+output_file = "Titan_Experiment.ipynb"
+output_path = os.path.join(output_dir, output_file)
+
+# Ensure output directory exists (relative to where script is run)
+if not os.path.exists(output_dir):
+    try:
+        os.makedirs(output_dir)
+    except OSError:
+        pass # Might be running inside scripts dir, handled below or ignore
+
+# Handle path if running from inside scripts/
+if not os.path.exists(output_dir) and os.path.exists("../notebooks"):
+    output_path = os.path.join("../notebooks", output_file)
+
+# Delete existing file if it exists
+if os.path.exists(output_path):
+    os.remove(output_path)
+    print(f"Deleted existing {output_path}")
+
+# Also check for one in current dir and delete to avoid confusion
+if os.path.exists(output_file) and output_file != output_path:
+    os.remove(output_file)
+    print(f"Deleted existing {output_file} from current directory")
+
+with open(output_path, "w") as f:
     json.dump(notebook, f, indent=2)
 
-print("Titan_Experiment.ipynb generated successfully.")
+print(f"{output_file} generated successfully at {output_path}")
