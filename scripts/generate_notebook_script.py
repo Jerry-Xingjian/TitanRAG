@@ -290,11 +290,17 @@ cells.append({
     "cell_type": "markdown",
     "metadata": {},
     "source": [
-        "## 10. Hybrid Titan: TitanRAG + Flan-T5 Generation\n",
-        "This cell demonstrates **Direction A** from the research plan:\n",
+        "## 10. Hybrid Titan: TitanRAG + Flan-T5 + Decision Maker\n",
+        "This cell demonstrates **Direction A** with intelligent mode selection:\n",
+        "- **Decision Maker** automatically chooses between titans_only and hybrid modes\n",
         "- TitanRAG performs retrieval using Ensemble Fusion (Keyword + Memory + Embedding)\n",
         "- Flan-T5 generates natural language answers from context\n",
-        "- **Online Learning**: Model learns from each Q&A pair"
+        "- **Online Learning**: Model learns from each Q&A pair\n",
+        "\n",
+        "**Decision Signals**:\n",
+        "1. Question Type (30%): Factual vs Reasoning\n",
+        "2. Memory Confidence (40%): LTM output strength\n",
+        "3. Retrieval Dispersion (30%): Score distribution"
     ]
 })
 
@@ -304,30 +310,30 @@ cells.append({
     "metadata": {},
     "outputs": [],
     "source": [
-        "# Hybrid Titan Demo: TitanRAG Retrieval + Flan-T5 Generation\n",
+        "# Hybrid Titan Demo: TitanRAG Retrieval + Flan-T5 Generation + Decision Maker\n",
         "# Running ALL THREE ESSAYS with Online Learning\n",
         "\n",
         "print('=' * 60)\n",
         "print('HYBRID TITAN DEMO - ALL ESSAYS')\n",
         "print('=' * 60)\n",
         "\n",
-        "# 1. Climate Essay\n",
+        "# 1. Climate Essay (Default Decision Maker Settings)\n",
         "print('\\n' + '─' * 60)\n",
-        "print('📖 Essay 1/3: CLIMATE CHANGE')\n",
+        "print('📖 Essay 1/3: CLIMATE CHANGE (Default Settings)')\n",
         "print('─' * 60)\n",
         "!python projects/hybrid_titans/hybrid_titan_demo.py --essay climate --epochs 50 --topk 5\n",
         "\n",
-        "# 2. AI Essay\n",
+        "# 2. AI Essay (Custom: More aggressive titans_only)\n",
         "print('\\n' + '─' * 60)\n",
-        "print('📖 Essay 2/3: ARTIFICIAL INTELLIGENCE')\n",
+        "print('📖 Essay 2/3: ARTIFICIAL INTELLIGENCE (High Threshold)')\n",
         "print('─' * 60)\n",
-        "!python projects/hybrid_titans/hybrid_titan_demo.py --essay ai --epochs 50 --topk 5\n",
+        "!python projects/hybrid_titans/hybrid_titan_demo.py --essay ai --epochs 50 --topk 5 --decision_threshold 0.6\n",
         "\n",
-        "# 3. Space Essay\n",
+        "# 3. Space Essay (Custom: Emphasize question type)\n",
         "print('\\n' + '─' * 60)\n",
-        "print('📖 Essay 3/3: SOLAR SYSTEM')\n",
+        "print('📖 Essay 3/3: SOLAR SYSTEM (Question-Type Weighted)')\n",
         "print('─' * 60)\n",
-        "!python projects/hybrid_titans/hybrid_titan_demo.py --essay space --epochs 50 --topk 5\n"
+        "!python projects/hybrid_titans/hybrid_titan_demo.py --essay space --epochs 50 --topk 5 --question_weight 0.5 --memory_weight 0.3 --dispersion_weight 0.2\n"
     ]
 })
 
