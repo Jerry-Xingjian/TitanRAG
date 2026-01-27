@@ -337,6 +337,84 @@ cells.append({
     ]
 })
 
+# Cell 12: Trainable Decision Maker
+cells.append({
+    "cell_type": "markdown",
+    "metadata": {},
+    "source": [
+        "## 11. Trainable Decision Maker (MLP Classifier)\n",
+        "This cell demonstrates the **Trainable Decision Maker**:\n",
+        "- Uses an MLP classifier to learn when to use titans_only vs hybrid mode\n",
+        "- Automatic labeling: compares both modes' answer quality\n",
+        "- Training data collected during Q&A, model trained periodically\n",
+        "\n",
+        "**Features** (5-dim input):\n",
+        "1. Question Type Score (factual vs reasoning)\n",
+        "2. Memory Confidence (LTM output strength)\n",
+        "3. Retrieval Dispersion (score entropy)\n",
+        "4. Question Length (normalized)\n",
+        "5. Keyword Density"
+    ]
+})
+
+cells.append({
+    "cell_type": "code",
+    "execution_count": None,
+    "metadata": {},
+    "outputs": [],
+    "source": [
+        "# Trainable Decision Maker: Training Mode\n",
+        "# Collects data from all 3 essays and trains the MLP classifier\n",
+        "\n",
+        "print('=' * 60)\n",
+        "print('TRAINABLE DECISION MAKER - TRAINING')\n",
+        "print('=' * 60)\n",
+        "\n",
+        "# Train on Climate Essay (collect samples + train)\n",
+        "print('\\n' + '─' * 60)\n",
+        "print('🧠 Training on Climate Essay...')\n",
+        "print('─' * 60)\n",
+        "!python projects/hybrid_titans/hybrid_titan_demo.py --essay climate --epochs 50 --use_trainable_decider --train_decider --train_epochs 100\n",
+        "\n",
+        "# Train on AI Essay (load previous model + continue training)\n",
+        "print('\\n' + '─' * 60)\n",
+        "print('🧠 Training on AI Essay...')\n",
+        "print('─' * 60)\n",
+        "!python projects/hybrid_titans/hybrid_titan_demo.py --essay ai --epochs 50 --use_trainable_decider --train_decider --train_epochs 100 --decider_model_path decider_model_climate.pt\n"
+    ]
+})
+
+# Cell 13: Trainable Decision Maker - Inference
+cells.append({
+    "cell_type": "markdown",
+    "metadata": {},
+    "source": [
+        "## 12. Trainable Decision Maker - Inference\n",
+        "Now using the trained MLP classifier for inference on a new essay."
+    ]
+})
+
+cells.append({
+    "cell_type": "code",
+    "execution_count": None,
+    "metadata": {},
+    "outputs": [],
+    "source": [
+        "# Trainable Decision Maker: Inference Mode (WITH fallback disabled)\n",
+        "# Use trained model on Space Essay (unseen during training)\n",
+        "# --disable_fallback: shows pure TrainableDecider output without safety fallback\n",
+        "\n",
+        "print('=' * 60)\n",
+        "print('TRAINABLE DECISION MAKER - INFERENCE (Space Essay)')\n",
+        "print('Fallback DISABLED: showing pure decider output')\n",
+        "print('=' * 60)\n",
+        "\n",
+        "!python projects/hybrid_titans/hybrid_titan_demo.py --essay space --epochs 50 --use_trainable_decider --decider_model_path decider_model_climate.pt --disable_fallback\n",
+        "\n",
+        "print('\\\\n✅ Trainable Decision Maker Demo Complete!')\n"
+    ]
+})
+
 # Notebook Structure
 notebook = {
     "cells": cells,
