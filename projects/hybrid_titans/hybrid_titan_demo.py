@@ -24,19 +24,20 @@ from main import TitanRAG
 from data.sample_essays import ESSAY_CLIMATE, ESSAY_AI, ESSAY_SPACE, TEST_QUESTIONS
 
 
-def split_into_chunks(text, min_length=30, sentences_per_chunk=2):
+def split_into_chunks(text, min_length=30, sentences_per_chunk=3, overlap_sentences=1):
     """
-    Split text into semantic chunks for retrieval.
+    Split text into semantic chunks for retrieval with overlapping windows.
     
     Strategy:
-    - Headers are grouped with their following 2-3 sentences
-    - Regular paragraphs are split into overlapping chunks
-    - Maintains context continuity while being granular enough for precise retrieval
+    - Headers are grouped with their following sentences
+    - Chunks overlap by 1 sentence to avoid boundary information loss
+    - Each chunk contains 3 sentences for better context
     
     Args:
         text: Input text (can contain markdown headers)
         min_length: Minimum chunk length to keep
-        sentences_per_chunk: Number of sentences per regular chunk
+        sentences_per_chunk: Number of sentences per chunk (default: 3)
+        overlap_sentences: Number of sentences to overlap between chunks (default: 1)
         
     Returns:
         List of text chunks
@@ -44,31 +45,9 @@ def split_into_chunks(text, min_length=30, sentences_per_chunk=2):
     lines = text.split('\n')
     chunks = []
     current_header = ""
-    current_content = []
+    all_sentences = []  # Collect all sentences first
     
-    def flush_content():
-        """Flush accumulated content with header into chunks."""
-        nonlocal current_header, current_content
-        
-        if not current_content:
-            if current_header and len(current_header) > 5:
-                chunks.append(current_header)
-            current_header = ""
-            return
-            
-        # Combine header with content
-        content_text = " ".join(current_content)
-        if current_header:
-            full_chunk = f"{current_header} {content_text}"
-        else:
-            full_chunk = content_text
-            
-        if len(full_chunk) >= min_length:
-            chunks.append(full_chunk)
-        
-        current_header = ""
-        current_content = []
-    
+    # First pass: collect all sentences with their headers
     for line in lines:
         line = line.strip()
         if not line:
@@ -76,8 +55,13 @@ def split_into_chunks(text, min_length=30, sentences_per_chunk=2):
         
         # Check if it's a header
         if line.startswith('#'):
-            # Flush previous section
-            flush_content()
+            # If we have accumulated sentences, create chunk before new header
+            if all_sentences:
+                _create_chunks_from_sentences(
+                    chunks, current_header, all_sentences, 
+                    sentences_per_chunk, overlap_sentences, min_length
+                )
+                all_sentences = []
             current_header = line
             continue
         
@@ -96,16 +80,60 @@ def split_into_chunks(text, min_length=30, sentences_per_chunk=2):
             part = part.replace('etc§', 'etc.').replace('eg§', 'e.g.').replace('ie§', 'i.e.')
             
             if len(part) >= 10:  # Minimum sentence length
-                current_content.append(part)
-                
-                # Create chunk when we have enough sentences
-                if len(current_content) >= sentences_per_chunk:
-                    flush_content()
+                all_sentences.append(part)
     
-    # Flush remaining content
-    flush_content()
+    # Flush remaining sentences
+    if all_sentences or current_header:
+        _create_chunks_from_sentences(
+            chunks, current_header, all_sentences, 
+            sentences_per_chunk, overlap_sentences, min_length
+        )
     
     return chunks
+
+
+def _create_chunks_from_sentences(chunks, header, sentences, 
+                                   sentences_per_chunk, overlap_sentences, min_length):
+    """Helper: Create overlapping chunks from a list of sentences."""
+    if not sentences:
+        if header and len(header) > 5:
+            chunks.append(header)
+        return
+    
+    # If we have fewer sentences than chunk size, create one chunk
+    if len(sentences) <= sentences_per_chunk:
+        content = " ".join(sentences)
+        if header:
+            chunk = f"{header} {content}"
+        else:
+            chunk = content
+        if len(chunk) >= min_length:
+            chunks.append(chunk)
+        return
+    
+    # Create overlapping chunks using sliding window
+    step = sentences_per_chunk - overlap_sentences
+    step = max(1, step)  # Ensure at least 1 step
+    
+    for i in range(0, len(sentences), step):
+        window = sentences[i:i + sentences_per_chunk]
+        if not window:
+            break
+            
+        content = " ".join(window)
+        
+        # Include header only in first chunk of section
+        if i == 0 and header:
+            chunk = f"{header} {content}"
+        else:
+            chunk = content
+            
+        if len(chunk) >= min_length:
+            chunks.append(chunk)
+        
+        # Stop if we've processed all sentences
+        if i + sentences_per_chunk >= len(sentences):
+            break
 
 
 class SentenceTransformerEmbedder(nn.Module):
