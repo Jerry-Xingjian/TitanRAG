@@ -14,6 +14,7 @@ import torch.nn as nn
 import argparse
 import sys
 import os
+import re  # For sentence splitting
 
 # Add parent directory to path (hybrid_titans -> projects -> TitanLLM)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -21,6 +22,90 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 
 from main import TitanRAG
 from data.sample_essays import ESSAY_CLIMATE, ESSAY_AI, ESSAY_SPACE, TEST_QUESTIONS
+
+
+def split_into_chunks(text, min_length=30, sentences_per_chunk=2):
+    """
+    Split text into semantic chunks for retrieval.
+    
+    Strategy:
+    - Headers are grouped with their following 2-3 sentences
+    - Regular paragraphs are split into overlapping chunks
+    - Maintains context continuity while being granular enough for precise retrieval
+    
+    Args:
+        text: Input text (can contain markdown headers)
+        min_length: Minimum chunk length to keep
+        sentences_per_chunk: Number of sentences per regular chunk
+        
+    Returns:
+        List of text chunks
+    """
+    lines = text.split('\n')
+    chunks = []
+    current_header = ""
+    current_content = []
+    
+    def flush_content():
+        """Flush accumulated content with header into chunks."""
+        nonlocal current_header, current_content
+        
+        if not current_content:
+            if current_header and len(current_header) > 5:
+                chunks.append(current_header)
+            current_header = ""
+            return
+            
+        # Combine header with content
+        content_text = " ".join(current_content)
+        if current_header:
+            full_chunk = f"{current_header} {content_text}"
+        else:
+            full_chunk = content_text
+            
+        if len(full_chunk) >= min_length:
+            chunks.append(full_chunk)
+        
+        current_header = ""
+        current_content = []
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # Check if it's a header
+        if line.startswith('#'):
+            # Flush previous section
+            flush_content()
+            current_header = line
+            continue
+        
+        # Handle regular content - split into sentences
+        # Protect abbreviations
+        protected = line.replace('Dr.', 'Dr§').replace('Mr.', 'Mr§').replace('Ms.', 'Ms§')
+        protected = protected.replace('etc.', 'etc§').replace('e.g.', 'eg§').replace('i.e.', 'ie§')
+        
+        # Split on sentence boundaries
+        parts = re.split(r'(?<=[.!?])\s+', protected)
+        
+        for part in parts:
+            part = part.strip()
+            # Restore abbreviations
+            part = part.replace('Dr§', 'Dr.').replace('Mr§', 'Mr.').replace('Ms§', 'Ms.')
+            part = part.replace('etc§', 'etc.').replace('eg§', 'e.g.').replace('ie§', 'i.e.')
+            
+            if len(part) >= 10:  # Minimum sentence length
+                current_content.append(part)
+                
+                # Create chunk when we have enough sentences
+                if len(current_content) >= sentences_per_chunk:
+                    flush_content()
+    
+    # Flush remaining content
+    flush_content()
+    
+    return chunks
 
 
 class SentenceTransformerEmbedder(nn.Module):
@@ -583,7 +668,7 @@ class HybridTitanRAG(nn.Module):
         if enable_fallback:
             print(f"✅ Fallback enabled (confidence < {fallback_confidence_threshold} → switch to hybrid)")
     
-    def retrieve(self, question, essay_lines, line_embeddings, topk=5):
+    def retrieve(self, question, essay_lines, line_embeddings, topk=7):
         """
         Retrieve relevant context using Ensemble Fusion.
         (Combines Keyword + Memory + Embedding for robust retrieval)
@@ -654,30 +739,34 @@ class HybridTitanRAG(nn.Module):
         """
         Generate answer using Flan-T5 with retrieved context.
         """
-        # Build prompt optimized for Flan-T5 instruction format
-        prompt = f"""Based on the following context, answer the question with specific facts and numbers.
+        # Improved prompt - encourages best-effort answer instead of giving up
+        prompt = f"""Answer the question based on the context provided.
+Extract specific details: exact numbers, names, dates, and technical terms.
+Provide the most relevant answer from the context, even if partial.
 
-Context: {context}
+Context:
+{context}
 
 Question: {question}
 
 Answer:"""
         
-        # Tokenize
+        # Tokenize with increased max_length for more context
         inputs = self.tokenizer(
             prompt, 
             return_tensors="pt", 
             truncation=True, 
-            max_length=512
+            max_length=768  # Increased from 512 for more context
         )
         
-        # Generate (greedy decoding for more accurate extraction)
+        # Generate with beam search for better quality
         with torch.no_grad():
             outputs = self.llm.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                num_beams=3,  # Beam search for better quality
-                early_stopping=True
+                num_beams=4,  # Increased from 3 for better quality
+                early_stopping=True,
+                no_repeat_ngram_size=2  # Avoid repetition
             )
         
         # Decode
@@ -685,7 +774,7 @@ Answer:"""
         
         return answer, prompt
     
-    def generate_from_memory(self, question, query_emb, essay_lines, line_embeddings, max_new_tokens=100, topk=2):
+    def generate_from_memory(self, question, query_emb, essay_lines, line_embeddings, max_new_tokens=100, topk=4):
         """
         Generate answer using Titan memory-guided retrieval (titans_only mode).
         
@@ -694,7 +783,7 @@ Answer:"""
         
         Strategy:
         1. Get memory-enhanced representation from Titan LTM
-        2. Use memory output to find most similar paragraphs (memory-guided retrieval)
+        2. Use memory output to find most similar sentences (memory-guided retrieval)
         3. Provide context to LLM for answer generation
         
         This achieves the "titans_only" goal of relying on Titan's learned memory
@@ -711,38 +800,40 @@ Answer:"""
                 memory_vec.unsqueeze(0), line_embeddings
             )
             
-            # Get top-k paragraphs based on memory similarity (not full ensemble fusion)
+            # Get top-k sentences based on memory similarity (increased from 2 to 4)
             topk_values, topk_indices = memory_scores.topk(min(topk, len(essay_lines)))
             
-            # Build context from memory-recalled paragraphs
+            # Build context from memory-recalled sentences
             context_lines = [essay_lines[idx] for idx in topk_indices.tolist()]
             memory_context = " ".join(context_lines)
         
-        # Step 3: Build prompt with memory-recalled context
-        # Use a simpler prompt since this is "memory-based" recall
-        prompt = f"""Based on the following information from memory, answer the question.
+        # Step 3: Simplified prompt for memory-based recall
+        prompt = f"""Answer the question based on the context from memory.
+Extract specific details: exact numbers, names, dates, and technical terms.
 
-Context from memory: {memory_context}
+Memory context:
+{memory_context}
 
 Question: {question}
 
 Answer:"""
         
-        # Tokenize
+        # Tokenize with increased max_length
         inputs = self.tokenizer(
             prompt, 
             return_tensors="pt", 
             truncation=True, 
-            max_length=512
+            max_length=768  # Increased for more context
         )
         
-        # Generate
+        # Generate with improved settings
         with torch.no_grad():
             outputs = self.llm.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
-                num_beams=3,
-                early_stopping=True
+                num_beams=4,  # Increased from 3
+                early_stopping=True,
+                no_repeat_ngram_size=2  # Avoid repetition
             )
         
         # Decode
@@ -1106,29 +1197,23 @@ def run_hybrid_titan_demo(args):
     
     titan_rag = TitanRAG(base_model)
     
-    # Parse essay into PARAGRAPHS (not lines) for better context retention
-    # Split by double newlines, then clean up each paragraph
-    raw_paragraphs = essay_text.split('\n\n')
-    essay_paragraphs = []
-    for para in raw_paragraphs:
-        # Merge lines within paragraph, clean up
-        cleaned = ' '.join(line.strip() for line in para.split('\n') if line.strip())
-        if cleaned and len(cleaned) > 10:  # Skip empty or very short
-            essay_paragraphs.append(cleaned)
+    # Parse essay into semantic CHUNKS (headers + 2 sentences each)
+    # This preserves context while enabling granular retrieval
+    essay_chunks = split_into_chunks(essay_text, min_length=30, sentences_per_chunk=2)
     
-    print(f"\n🔄 Embedding {len(essay_paragraphs)} paragraphs...")
+    print(f"\n🔄 Embedding {len(essay_chunks)} chunks...")
     
-    # Embed all paragraphs
+    # Embed all chunks
     with torch.no_grad():
-        para_embeddings = []
-        for para in essay_paragraphs:
-            para_emb = embedder(para)
-            para_vec = para_emb.reshape(-1, args.dim).mean(dim=0)
-            para_embeddings.append(para_vec)
-        line_embeddings = torch.stack(para_embeddings)  # Keep variable name for compatibility
+        chunk_embeddings = []
+        for chunk in essay_chunks:
+            chunk_emb = embedder(chunk)
+            chunk_vec = chunk_emb.reshape(-1, args.dim).mean(dim=0)
+            chunk_embeddings.append(chunk_vec)
+        line_embeddings = torch.stack(chunk_embeddings)  # Keep variable name for compatibility
     
-    # Use paragraphs instead of lines
-    essay_lines = essay_paragraphs  # Alias for compatibility
+    # Use chunks for retrieval
+    essay_lines = essay_chunks  # Alias for compatibility
     
     # Digest into TitanRAG
     print(f"\n🧠 Digesting into TitanRAG ({args.epochs} epochs)...")
