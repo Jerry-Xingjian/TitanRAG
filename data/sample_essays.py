@@ -127,25 +127,45 @@ Other dwarf planets include Eris, Haumea, Makemake, and Ceres.
 - **Long-term**: Potential colonization of Mars and asteroid mining.
 """
 
-# Questions for testing (with expected answers from the essays)
+# Questions for testing - Mixed factual and reasoning questions
+# Factual questions (what/when/where) should trigger HYBRID mode
+# Reasoning questions (why/explain/describe) should trigger TITANS_ONLY mode
 TEST_QUESTIONS = {
     "climate": [
+        # Factual questions (expect HYBRID)
         ("What is the current CO2 concentration in the atmosphere?", "421 parts per million (ppm) in 2023"),
         ("How much has the global temperature risen since pre-industrial times?", "approximately 1.1°C"),
         ("What year was the Paris Agreement signed?", "2015"),
         ("How much have sea levels risen since 1900?", "about 20 centimeters (8 inches)"),
+        
+        # Reasoning questions (expect TITANS_ONLY)
+        ("Why is climate change primarily caused by human activities?", "burning of fossil fuels releases greenhouse gases that trap heat"),
+        ("Explain how the greenhouse effect works", "greenhouse gases trap heat from the sun, creating warming effect"),
+        ("Describe the main impacts of climate change on ecosystems", "coral bleaching, species migration, biodiversity loss, and habitat disruption"),
     ],
     "ai": [
+        # Factual questions (expect HYBRID)
         ("Who coined the term 'Artificial Intelligence'?", "John McCarthy in 1956"),
         ("When did Deep Blue defeat Garry Kasparov?", "1997"),
         ("What is the estimated economic impact of AI by 2030?", "$15.7 trillion according to PwC"),
         ("What architecture powers GPT-4 and Claude?", "Transformers"),
+        
+        # Reasoning questions (expect TITANS_ONLY)
+        ("Why is bias in AI a major ethical concern?", "bias in training data can lead to unfair outcomes and discrimination"),
+        ("Explain the difference between Narrow AI and General AI", "Narrow AI is designed for specific tasks while General AI has human-level cognitive abilities across all domains"),
+        ("Describe how reinforcement learning works", "training agents through reward-based feedback to learn optimal behaviors"),
     ],
     "space": [
+        # Factual questions (expect HYBRID)
         ("How old is the Solar System?", "approximately 4.6 billion years"),
         ("What is the tallest volcano in the Solar System?", "Olympus Mons, 21.9 km high"),
         ("When was the James Webb Space Telescope launched?", "2021"),
         ("What year was Pluto reclassified as a dwarf planet?", "2006"),
+        
+        # Reasoning questions (expect TITANS_ONLY)
+        ("Why is Venus the hottest planet despite Mercury being closer to the Sun?", "Venus has a thick atmosphere that traps heat through greenhouse effect"),
+        ("Explain why outer planets are called gas giants", "they are much larger and composed primarily of gases like hydrogen and helium rather than solid rock"),
+        ("Describe the significance of the Voyager missions", "first spacecraft to reach interstellar space and explore the outer solar system"),
     ],
 }
 
