@@ -345,36 +345,6 @@ class TrainableDecider(nn.Module):
         if len(self.training_buffer) > self.buffer_max_size:
             self.training_buffer.pop(0)
     
-    def train_step(self, batch_size=16):
-        """
-        Perform one training step on buffered samples.
-        
-        Returns:
-            loss: Training loss, or None if not enough samples
-        """
-        if len(self.training_buffer) < batch_size:
-            return None
-        
-        # Sample batch
-        import random
-        batch = random.sample(self.training_buffer, batch_size)
-        
-        features = torch.stack([x[0] for x in batch])
-        labels = torch.tensor([x[1] for x in batch], dtype=torch.float32).unsqueeze(1)
-        
-        # Forward pass
-        self.train()
-        self.optimizer.zero_grad()
-        predictions = self.forward(features)
-        loss = self.criterion(predictions, labels)
-        
-        # Backward pass
-        loss.backward()
-        self.optimizer.step()
-        
-        self.eval()
-        return loss.item()
-    
     def train_on_buffer(self, epochs=10, batch_size=16):
         """
         Train on all buffered samples for multiple epochs.

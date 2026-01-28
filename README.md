@@ -13,6 +13,9 @@ This project explores the **Titans** architecture, a next-generation neural memo
     *   **MAL (Memory As Layer)**: Processes tokens sequentially through memory before attention.
 *   **TitanRAG**: A specialized wrapper for RAG tasks. It "reads" retrieved documents by training on them for a few epochs before answering questions, effectively "baking" knowledge into the neural weights.
 *   **Hybrid Retrieval**: Combines **Keyword Search** + **Neural Memory Search** + **Embedding Search** (Ensemble Fusion) for robust context retrieval.
+*   **Intelligent Decision Maker**:
+    *   **Trainable Decider**: A MLP model that evolves via online AB testing feedback to choose the best strategy.
+    *   **Rule-based Decider**: A transparent expert system that makes decisions based on weighted signals (Question Type, Memory Confidence, Retrieval Dispersion).
 
 ## 📂 Directory Structure
 
