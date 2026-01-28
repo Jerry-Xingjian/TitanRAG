@@ -7,12 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
-try:
-    import deepspeed
-    _HAS_DEEPSPEED = True
-except Exception:
-    deepspeed = None
-    _HAS_DEEPSPEED = False
+import deepspeed
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
@@ -507,17 +502,7 @@ def train_main(args):
     model = TitanModelForLM(titan_module, args.vocab_size, args.dim)
 
     ds_config = get_ds_config(args)
-    if _HAS_DEEPSPEED:
-        engine, optimizer, _, scheduler = deepspeed.initialize(model=model, model_parameters=model.parameters(), config=ds_config)
-    else:
-        # Fallback when deepspeed is not available: use a plain optimizer and scheduler
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-        total_steps = max(1, (len(train_dl) * args.num_epochs) // max(1, args.grad_acc)) if 'train_dl' in locals() else 100
-        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
-        engine = model
-        # Move model to CUDA if available
-        if torch.cuda.is_available():
-            engine = engine.cuda()
+    engine, optimizer, _, scheduler = deepspeed.initialize(model=model, model_parameters=model.parameters(), config=ds_config)
 
     global_steps = 0
     for epoch in range(args.num_epochs):
