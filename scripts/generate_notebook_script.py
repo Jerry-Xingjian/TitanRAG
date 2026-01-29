@@ -30,6 +30,7 @@ rag_b64 = get_b64_safe("projects/hybrid_titans/rag_compare.py")
 essays_b64 = get_b64_safe("data/sample_essays.py")
 essay_demo_b64 = get_b64_safe("projects/hybrid_titans/essay_rag_demo.py")
 hybrid_titan_b64 = get_b64_safe("projects/hybrid_titans/hybrid_titan_demo.py")
+pure_titan_b64 = get_b64_safe("projects/hybrid_titans/pure_titan_demo.py")
 
 # Define Notebook Cells
 cells = []
@@ -89,7 +90,8 @@ setup_code = [
     f"    'projects/hybrid_titans/rag_compare.py': '{rag_b64}',\n",
     f"    'data/sample_essays.py': '{essays_b64}',\n",
     f"    'projects/hybrid_titans/essay_rag_demo.py': '{essay_demo_b64}',\n",
-    f"    'projects/hybrid_titans/hybrid_titan_demo.py': '{hybrid_titan_b64}'\n",
+    f"    'projects/hybrid_titans/hybrid_titan_demo.py': '{hybrid_titan_b64}',\n",
+    f"    'projects/hybrid_titans/pure_titan_demo.py': '{pure_titan_b64}'\n",
     "}\n",
     "\n",
     "for path, content in files.items():\n",
@@ -412,6 +414,67 @@ cells.append({
         "!python projects/hybrid_titans/hybrid_titan_demo.py --essay space --epochs 50 --use_trainable_decider --decider_model_path decider_model_climate.pt --disable_fallback\n",
         "\n",
         "print('\\\\n✅ Trainable Decision Maker Demo Complete!')\n"
+    ]
+})
+
+# Cell 14: Pure Titan Demo
+cells.append({
+    "cell_type": "markdown",
+    "metadata": {},
+    "source": [
+        "## 13. Pure Titan Demo (Soft Prompting)\n",
+        "This cell demonstrates the **Pure Titan** approach:\n",
+        "- Memory vectors are projected into soft prompts for Flan-T5\n",
+        "- NO text retrieval at inference time\n",
+        "- Answers come purely from compressed neural memory\n",
+        "\n",
+        "**Comparison with Hybrid Titan**:\n",
+        "- Pure Titan: Memory → Soft Prompt → LLM\n",
+        "- Hybrid Titan (titans_only): Memory → Text Retrieval → LLM\n",
+        "\n",
+        "**Expected Results**:\n",
+        "- Better for conceptual/reasoning questions\n",
+        "- Lower accuracy on precise factual details\n",
+        "- Extreme memory compression"
+    ]
+})
+
+cells.append({
+    "cell_type": "code",
+    "execution_count": None,
+    "metadata": {},
+    "outputs": [],
+    "source": [
+        "# Pure Titan Demo: Memory-Only QA\n",
+        "# Running on ALL THREE ESSAYS with online learning\n",
+        "\n",
+        "print('=' * 60)\n",
+        "print('PURE TITAN DEMO - ALL ESSAYS')\n",
+        "print('Strategy: Soft Prompting (No Text Retrieval)')\n",
+        "print('=' * 60)\n",
+        "\n",
+        "# 1. Climate Essay\n",
+        "print('\\n' + '─' * 60)\n",
+        "print('📖 Essay 1/3: CLIMATE CHANGE')\n",
+        "print('─' * 60)\n",
+        "!python projects/hybrid_titans/pure_titan_demo.py --essay climate --epochs 100\n",
+        "\n",
+        "# 2. AI Essay\n",
+        "print('\\n' + '─' * 60)\n",
+        "print('📖 Essay 2/3: ARTIFICIAL INTELLIGENCE')\n",
+        "print('─' * 60)\n",
+        "!python projects/hybrid_titans/pure_titan_demo.py --essay ai --epochs 100\n",
+        "\n",
+        "# 3. Space Essay\n",
+        "print('\\n' + '─' * 60)\n",
+        "print('📖 Essay 3/3: SOLAR SYSTEM')\n",
+        "print('─' * 60)\n",
+        "!python projects/hybrid_titans/pure_titan_demo.py --essay space --epochs 100\n",
+        "\n",
+        "print('\\n' + '=' * 60)\n",
+        "print('✅ Pure Titan Demo Complete!')\n",
+        "print('Compare with Hybrid Titan results to see architecture differences.')\n",
+        "print('=' * 60)\n"
     ]
 })
 
