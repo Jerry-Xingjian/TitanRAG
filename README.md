@@ -53,7 +53,23 @@ To run the experiments using the self-contained notebook:
 
 > **Note**: You can also run locally using the scripts in `projects/`, but you will need a CUDA-ready environment with `deepspeed` installed.
 
-## 🔬 Research & Experiments
+## � Running Baseline Comparison
+
+To compare different retrieval strategies (PureRAG vs TitanOnly vs HybridRAG), run the `compare_baselines.py` script:
+
+### 📓 Running in Colab
+
+To run the comparison in Google Colab (or any notebook environment), regenerate the self-contained notebook:
+
+1.  **Generate Notebook**:
+    ```bash
+    python scripts/generate_baseline_notebook.py
+    ```
+    This creates `notebooks/Baseline_Comparison.ipynb`.
+
+2.  **Run**: Upload the notebook to Colab and run all cells. It packages all necessary code (Titans implementation, essay data, etc.) into the notebook itself.
+
+## �🔬 Research & Experiments
 
 *   **[Research Plan (CN)](docs/TitanRAG_Research_Plan_CN.md)**: Detailed roadmap for investigating TitanRAG.
 *   **[Walkthrough: Sparse Update](docs/Walkthrough_Threshold.md)**: Analysis of using a "Surprise Threshold" to skip redundant memory updates.
