@@ -7,7 +7,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributed as dist
-import deepspeed
+try:
+    import deepspeed
+except ImportError:
+    deepspeed = None
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import Dataset, DataLoader, RandomSampler, SequentialSampler
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
