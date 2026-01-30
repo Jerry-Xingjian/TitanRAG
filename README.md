@@ -53,7 +53,7 @@ To run the experiments using the self-contained notebook:
 
 > **Note**: You can also run locally using the scripts in `projects/`, but you will need a CUDA-ready environment with `deepspeed` installed.
 
-## � Running Baseline Comparison
+## Running Baseline Comparison
 
 To compare different retrieval strategies (PureRAG vs TitanOnly vs HybridRAG), run the `compare_baselines.py` script:
 
@@ -69,7 +69,14 @@ To run the comparison in Google Colab (or any notebook environment), regenerate 
 
 2.  **Run**: Upload the notebook to Colab and run all cells. It packages all necessary code (Titans implementation, essay data, etc.) into the notebook itself.
 
-## �🔬 Research & Experiments
+### Running locally (Conda / Anaconda)
+1. Create a virtual environment: `conda create -n titan-env python=3.10`
+2. Activate: `conda activate titan-env`
+3. Install dependencies: `conda install pytorch torchvision torchaudio -c pytorch`
+4. Finish dependencies: `pip install transformers sentence-transformers accelerate`
+5. Remove cache of FlanT5: `rm -rf ~/.cache/huggingface/hub/models--google--flan-t5-large`
+
+## 🔬 Research & Experiments
 
 *   **[Research Plan (CN)](docs/TitanRAG_Research_Plan_CN.md)**: Detailed roadmap for investigating TitanRAG.
 *   **[Walkthrough: Sparse Update](docs/Walkthrough_Threshold.md)**: Analysis of using a "Surprise Threshold" to skip redundant memory updates.
