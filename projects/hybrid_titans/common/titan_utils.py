@@ -13,10 +13,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 
 from main import TitanMAG, TitanMAC, TitanRAG
 
+# Detect device
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def create_titan_rag(dim=256, arch="MAG", window_size=32, memory_depth=3, 
                      num_persistent_tokens=4, threshold=0.0,
-                     learning_rate=0.01, forgetting_rate=0.0001):
+                     learning_rate=0.01, forgetting_rate=0.0001,
+                     device=None):
     """
     Create and configure a TitanRAG instance.
     
@@ -29,10 +33,14 @@ def create_titan_rag(dim=256, arch="MAG", window_size=32, memory_depth=3,
         threshold: Surprise threshold for sparse updates
         learning_rate: Learning rate (theta) for memory updates
         forgetting_rate: Forgetting rate (alpha) for memory decay
+        device: Device to use (default: auto-detect)
     
     Returns:
         TitanRAG: Configured TitanRAG instance
     """
+    if device is None:
+        device = DEVICE
+    
     if arch.upper() == "MAC":
         base_model = TitanMAC(
             dim=dim,
@@ -52,6 +60,9 @@ def create_titan_rag(dim=256, arch="MAG", window_size=32, memory_depth=3,
             threshold=threshold
         )
     
+    # Move model to device
+    base_model = base_model.to(device)
+    
     # Configure memory parameters
     with torch.no_grad():
         base_model.ltm.theta.fill_(learning_rate)
@@ -59,7 +70,8 @@ def create_titan_rag(dim=256, arch="MAG", window_size=32, memory_depth=3,
     
     titan_rag = TitanRAG(base_model)
     
-    print(f"✅ Created TitanRAG with {arch} architecture (dim={dim})")
+    device_name = "GPU" if device.type == "cuda" else "CPU"
+    print(f"✅ Created TitanRAG with {arch} architecture (dim={dim}) on {device_name}")
     
     return titan_rag
 

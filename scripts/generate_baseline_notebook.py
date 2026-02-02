@@ -8,7 +8,7 @@ baseline retrieval strategies: PureRAG, TitanOnly, and HybridRAG.
 Structure similar to Titan_Experiment.ipynb:
 1. Install Dependencies
 2. Setup File System (creates all files in one cell)
-3. Run Baseline Comparison (one cell!)
+3. Run Baseline Comparison (sample essays or SQuAD)
 
 Usage:
     python3 generate_baseline_notebook.py
@@ -35,6 +35,14 @@ def get_b64_safe(path):
         raise FileNotFoundError(f"Could not find {path}")
 
 
+def get_b64_optional(path):
+    """Get base64 or return None if file doesn't exist."""
+    try:
+        return get_b64_safe(path)
+    except FileNotFoundError:
+        return None
+
+
 def generate_notebook():
     """Generate the baseline comparison notebook."""
     
@@ -49,6 +57,9 @@ def generate_notebook():
     essays_b64 = get_b64_safe("data/sample_essays.py")
     init_b64 = base64.b64encode(b"# Common modules").decode("utf-8")
     
+    # Try to load processed_squad.py if it exists
+    squad_b64 = get_b64_optional("data/processed_squad.py")
+    
     cells = []
     
     # ===== Cell 1: Title =====
@@ -61,7 +72,11 @@ def generate_notebook():
             "This notebook compares three retrieval strategies:\n",
             "- **PureRAG**: BM25 + Embedding (no Memory)\n",
             "- **TitanOnly**: Memory-guided retrieval only\n", 
-            "- **HybridRAG**: BM25 + Memory + Embedding fusion"
+            "- **HybridRAG**: BM25 + Memory + Embedding fusion\n",
+            "\n",
+            "### Modes:\n",
+            "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
+            "2. **SQuAD Mode**: Use processed SQuAD dataset (requires processed_squad.py)"
         ]
     })
     
@@ -122,6 +137,11 @@ def generate_notebook():
         "print('\\n✅ All files created!')\n"
     ]
     
+    # Add processed_squad.py if it exists
+    if squad_b64:
+        setup_code.insert(-3, f"    'data/processed_squad.py': '{squad_b64}',\n")
+        setup_code.append("\nprint('📊 SQuAD dataset included!')\n")
+    
     cells.append({
         "cell_type": "code",
         "execution_count": None,
@@ -130,12 +150,12 @@ def generate_notebook():
         "source": setup_code
     })
     
-    # ===== Cell 4: Run Comparison =====
+    # ===== Cell 4: Run Sample Essays Comparison =====
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "## 3. Run Baseline Comparison\n",
+            "## 3. Run Baseline Comparison (Sample Essays)\n",
             "\n",
             "This cell runs comparison on the Climate essay with 50 epochs."
         ]
@@ -146,17 +166,55 @@ def generate_notebook():
         "metadata": {},
         "outputs": [],
         "source": [
-            "# Run baseline comparison\n",
+            "# Run baseline comparison on sample essays\n",
             "!python projects/hybrid_titans/compare_baselines.py --essay climate --epochs 50"
         ]
     })
     
-    # ===== Cell 5: Custom Comparison (Optional) =====
+    # ===== Cell 5: Run SQuAD Comparison =====
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "## 4. Custom Comparison (Optional)\n",
+            "## 4. Run Baseline Comparison (SQuAD Dataset)\n",
+            "\n",
+            "This cell runs comparison on the SQuAD dataset.\n",
+            "\n",
+            "**Parameters:**\n",
+            "- `--squad`: Enable SQuAD mode\n",
+            "- `--titles N`: Number of titles to evaluate (default: 10)\n",
+            "- `--max-questions N`: Max questions per title (default: 5)\n",
+            "- `--epochs N`: Digestion epochs (default: 50)\n",
+            "- `--verbose`: Show detailed output"
+        ]
+    })
+    
+    squad_cell_source = [
+        "# Run baseline comparison on SQuAD dataset\n",
+        "# Uncomment the line below to run\n",
+        "\n"
+    ]
+    
+    if squad_b64:
+        squad_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 3 --epochs 20\n")
+    else:
+        squad_cell_source.append("# Note: processed_squad.py not found. Run data/script.py first to generate it.\n")
+        squad_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 3 --epochs 20\n")
+    
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": squad_cell_source
+    })
+    
+    # ===== Cell 6: Custom Comparison (Optional) =====
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 5. Custom Comparison (Optional)\n",
             "\n",
             "Run the comparison with your own parameters."
         ]
@@ -167,8 +225,11 @@ def generate_notebook():
         "metadata": {},
         "outputs": [],
         "source": [
-            "# Custom parameters\n",
-            "# !python projects/hybrid_titans/compare_baselines.py --essay climate --epochs 100 --topk 5"
+            "# Custom parameters for sample essays\n",
+            "# !python projects/hybrid_titans/compare_baselines.py --essay ai --epochs 100 --topk 5\n",
+            "\n",
+            "# Custom parameters for SQuAD\n",
+            "# !python projects/hybrid_titans/compare_baselines.py --squad --titles 20 --max-questions 10 --epochs 50 --verbose"
         ]
     })
     

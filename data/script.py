@@ -1,189 +1,243 @@
-import json
+"""
+Script to clean and process train.csv dataset.
+
+This script:
+1. Filters out unique titles
+2. Combines duplicate contexts based on title
+3. Extracts question and answer pairs for each context
+
+Output format matches sample_essays.py structure.
+"""
+
+import csv
+import ast
 import re
-from typing import Dict, List, Tuple, Any
+import sys
+import io
+
+# Fix Windows console encoding
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 
-def load_squad_data(file_path: str) -> Dict[str, Any]:
+def load_csv_data(file_path: str) -> list:
     """
-    加载SQuAD2.0数据集（JSON格式）
+    Load CSV dataset.
+    
     Args:
-        file_path: SQuAD2.0数据集文件路径（train-v2.0.json/dev-v2.0.json）
+        file_path: Path to the CSV file
+        
     Returns:
-        解析后的JSON字典
+        List of row dictionaries
     """
-    with open(file_path, "r", encoding="utf-8") as f:
-        squad_data = json.load(f)
-    return squad_data
+    data = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            data.append(row)
+    print(f"Loaded {len(data)} rows from CSV")
+    return data
 
 
-def merge_context_by_title(squad_data: Dict[str, Any]) -> Tuple[Dict[str, str], Dict[str, List[Dict]]]:
+def parse_answer(answers_str: str) -> str:
     """
-    按title合并context，并保留原始问题-答案对
+    Parse the answer string from CSV format.
+    
+    Format: {'text': array(['answer text'], dtype=object), 'answer_start': array([123], dtype=int32)}
+    
     Args:
-        squad_data: 加载后的SQuAD数据集
+        answers_str: Raw answer string from CSV
+        
     Returns:
-        title_context_map: {title: 合并后的完整context}
-        title_qas_map: {title: 该title下所有qas数据}
+        Extracted answer text, or empty string if parsing fails
     """
-    title_context_map = {}  # 存储每个title对应的合并后context
-    title_qas_map = {}  # 存储每个title对应的所有问题-答案对
-
-    for data_item in squad_data["data"]:
-        title = data_item["title"].strip()
-        paragraphs = data_item["paragraphs"]
-
-        # 合并当前title下的所有context（去重+分段，保持可读性）
-        merged_context = []
-        for para in paragraphs:
-            context = para["context"].strip()
-            if context not in merged_context:  # 去重避免重复文本
-                merged_context.append(context)
-
-        # 拼接成类长文本格式（分段+换行）
-        final_context = "\n\n".join(merged_context)
-        title_context_map[title] = final_context
-
-        # 收集当前title下的所有qas（问题-答案对）
-        all_qas = []
-        for para in paragraphs:
-            all_qas.extend(para["qas"])
-        title_qas_map[title] = all_qas
-
-    return title_context_map, title_qas_map
+    try:
+        # Clean numpy array format to Python list format
+        cleaned = answers_str.replace("array(", "").replace(", dtype=object)", "").replace(", dtype=int32)", "")
+        answers_dict = ast.literal_eval(cleaned)
+        
+        text_list = answers_dict.get('text', [])
+        if text_list and len(text_list) > 0:
+            return text_list[0].strip()
+    except Exception:
+        pass
+    return ""
 
 
-def validate_answer_in_context(answer_text: str, context: str) -> bool:
+def process_dataset(data: list) -> tuple:
     """
-    验证答案是否存在于合并后的context中（兼容部分匹配/大小写忽略）
+    Process the dataset to extract unique titles, combined contexts, and QA pairs.
+    
     Args:
-        answer_text: 答案文本
-        context: 合并后的完整context
+        data: List of row dictionaries from CSV
+        
     Returns:
-        答案是否在context中（布尔值）
+        Tuple of (contexts_dict, questions_dict)
+        - contexts_dict: {title: combined_context}
+        - questions_dict: {title: [(question, answer), ...]}
     """
-    if not answer_text:  # 处理不可回答问题
-        return True
+    # Store unique contexts per title (preserve order, avoid duplicates)
+    title_contexts = {}  # {title: [list of unique context paragraphs]}
+    title_questions = {}  # {title: [(question, answer), ...]}
+    
+    for row in data:
+        title = row['title'].strip()
+        context = row['context'].strip()
+        question = row['question'].strip()
+        answer = parse_answer(row['answers'])
+        
+        # Initialize title entry if not exists
+        if title not in title_contexts:
+            title_contexts[title] = []
+            title_questions[title] = []
+        
+        # Add context if not already present (avoid duplicates)
+        if context not in title_contexts[title]:
+            title_contexts[title].append(context)
+        
+        # Add question-answer pair (only if answer exists)
+        if answer:
+            title_questions[title].append((question, answer))
+    
+    # Combine contexts for each title
+    contexts_dict = {}
+    for title, paragraphs in title_contexts.items():
+        contexts_dict[title] = "\n\n".join(paragraphs)
+    
+    print(f"Processed {len(contexts_dict)} unique titles")
+    print(f"Total QA pairs: {sum(len(qa) for qa in title_questions.values())}")
+    
+    return contexts_dict, title_questions
 
-    # 模糊匹配（忽略大小写、标点、多余空格）
-    clean_answer = re.sub(r"[^\w\s]", "", answer_text.lower()).strip()
-    clean_context = re.sub(r"[^\w\s]", "", context.lower()).strip()
 
-    # 精确子串匹配（核心逻辑：确保答案确实来自context）
-    return clean_answer in clean_context
-
-
-def process_squad_for_titan_model(
-        squad_file_path: str,
-        output_json_path: str = "processed_squad_titan.json"
-) -> Dict[str, Any]:
+def generate_output_file(contexts: dict, questions: dict, output_path: str):
     """
-    处理SQuAD2.0数据集，输出适配Titan大模型的格式
-    格式参考sample_essays.py的TEST_QUESTIONS结构
+    Generate output Python file in sample_essays.py format.
+    
     Args:
-        squad_file_path: 原始SQuAD2.0文件路径
-        output_json_path: 处理后的数据输出路径
+        contexts: Dictionary of {title: combined_context}
+        questions: Dictionary of {title: [(question, answer), ...]}
+        output_path: Path for output file
+    """
+    with open(output_path, 'w', encoding='utf-8') as f:
+        # Header
+        f.write('"""\n')
+        f.write('Processed SQuAD Dataset for TitanRAG Experiments\n')
+        f.write('\n')
+        f.write('This file contains processed contexts and question-answer pairs\n')
+        f.write('extracted from the train.csv dataset.\n')
+        f.write('"""\n\n')
+        
+        # Generate context variables
+        f.write('# ============================================================\n')
+        f.write('# CONTEXTS - Combined paragraphs by title\n')
+        f.write('# ============================================================\n\n')
+        
+        for title, context in contexts.items():
+            # Create valid Python variable name
+            var_name = create_variable_name(title)
+            # Escape triple quotes in content
+            escaped_context = context.replace('"""', '\\"\\"\\"')
+            f.write(f'{var_name} = """\n{escaped_context}\n"""\n\n')
+        
+        # Generate questions dictionary
+        f.write('# ============================================================\n')
+        f.write('# TEST_QUESTIONS - Question-Answer pairs by title\n')
+        f.write('# ============================================================\n\n')
+        f.write('TEST_QUESTIONS = {\n')
+        
+        for title, qa_pairs in questions.items():
+            if not qa_pairs:
+                continue
+            # Escape quotes in title
+            escaped_title = title.replace('"', '\\"')
+            f.write(f'    "{escaped_title}": [\n')
+            
+            for question, answer in qa_pairs:
+                # Escape quotes in question and answer
+                escaped_q = question.replace('"', '\\"').replace('\n', ' ')
+                escaped_a = answer.replace('"', '\\"').replace('\n', ' ')
+                f.write(f'        ("{escaped_q}", "{escaped_a}"),\n')
+            
+            f.write('    ],\n')
+        
+        f.write('}\n\n')
+        
+        # Helper functions
+        f.write('# ============================================================\n')
+        f.write('# HELPER FUNCTIONS\n')
+        f.write('# ============================================================\n\n')
+        
+        f.write('def get_all_contexts():\n')
+        f.write('    """Return all contexts as a dictionary."""\n')
+        f.write('    return {\n')
+        for title in contexts.keys():
+            var_name = create_variable_name(title)
+            escaped_title = title.replace('"', '\\"')
+            f.write(f'        "{escaped_title}": {var_name},\n')
+        f.write('    }\n\n')
+        
+        f.write('def get_test_questions():\n')
+        f.write('    """Return test questions with expected answers."""\n')
+        f.write('    return TEST_QUESTIONS\n')
+    
+    print(f"Output saved to: {output_path}")
+
+
+def create_variable_name(title: str) -> str:
+    """
+    Create a valid Python variable name from title.
+    
+    Args:
+        title: Original title string
+        
     Returns:
-        处理后的完整数据集（字典格式）
+        Valid Python variable name
     """
-    # 1. 加载原始数据
-    squad_data = load_squad_data(squad_file_path)
-    print(f"✅ 成功加载SQuAD2.0数据集，共{len(squad_data['data'])}个title")
-
-    # 2. 按title合并context
-    title_context_map, title_qas_map = merge_context_by_title(squad_data)
-    print(f"✅ 成功合并context，共{len(title_context_map)}个唯一title")
-
-    # 3. 构建模型训练数据（参考sample_essays.py的TEST_QUESTIONS格式）
-    titan_training_data = {
-        "contexts": {},  # {title: 合并后的context}
-        "questions": {}  # {title: [(question, answer, is_impossible), ...]}
-    }
-
-    invalid_qa_count = 0  # 统计答案不在context中的无效QA
-    total_qa_count = 0  # 统计总QA数
-
-    for title, context in title_context_map.items():
-        titan_training_data["contexts"][title] = context
-        qas_list = title_qas_map.get(title, [])
-        title_questions = []
-
-        for qa in qas_list:
-            total_qa_count += 1
-            question = qa["question"].strip()
-            is_impossible = qa.get("is_impossible", False)
-            answer_text = ""
-
-            # 处理可回答问题：提取答案文本
-            if not is_impossible and qa.get("answers"):
-                answer_text = qa["answers"][0]["text"].strip()  # 取第一个答案（SQuAD可能有多个）
-
-                # 验证答案是否在context中
-                if not validate_answer_in_context(answer_text, context):
-                    invalid_qa_count += 1
-                    continue  # 过滤答案不在context中的QA
-
-            # 加入训练数据（格式：(问题, 答案, 是否不可回答)）
-            title_questions.append((question, answer_text, is_impossible))
-
-        titan_training_data["questions"][title] = title_questions
-
-    # 4. 输出处理后的数据
-    with open(output_json_path, "w", encoding="utf-8") as f:
-        json.dump(titan_training_data, f, ensure_ascii=False, indent=2)
-
-    # 打印统计信息
-    print(f"✅ 数据处理完成！输出路径：{output_json_path}")
-    print(f"📊 统计信息：")
-    print(f"   - 总QA数：{total_qa_count}")
-    print(f"   - 无效QA数（答案不在context）：{invalid_qa_count}")
-    print(f"   - 有效QA数：{total_qa_count - invalid_qa_count}")
-    print(f"   - 最终保留title数：{len(titan_training_data['contexts'])}")
-
-    return titan_training_data
+    # Replace non-alphanumeric characters with underscore
+    name = re.sub(r'[^a-zA-Z0-9]', '_', title)
+    # Remove consecutive underscores
+    name = re.sub(r'_+', '_', name)
+    # Remove leading/trailing underscores
+    name = name.strip('_')
+    # Ensure starts with letter
+    if name and name[0].isdigit():
+        name = 'CONTEXT_' + name
+    else:
+        name = 'CONTEXT_' + name.upper()
+    return name
 
 
-def convert_to_sample_essay_format(titan_data: Dict[str, Any], output_path: str = "squad_sample_format.py"):
-    """
-    将处理后的数据转换为sample_essays.py的代码格式（可选）
-    方便直接集成到现有代码库中
-    """
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write('"""Processed SQuAD2.0 Data for TitanRAG Experiments"""')
-        f.write("\n\n")
-
-        # 写入合并后的context
-        f.write("# Merged Contexts by Title\n")
-        for title, context in titan_data["contexts"].items():
-            # 处理title的命名（转为合法变量名）
-            var_name = "CONTEXT_" + re.sub(r"[^A-Z0-9]", "_", title.upper())
-            f.write(f"{var_name} = '''{context}'''\n\n")
-
-        # 写入问题-答案对（类似TEST_QUESTIONS）
-        f.write("# Test Questions for Titan Model\n")
-        f.write("TEST_QUESTIONS_SQUAD = {\n")
-        for title, questions in titan_data["questions"].items():
-            # 转义引号，格式化问题列表
-            f.write(f'    "{title}": [\n')
-            for q, a, is_impossible in questions:
-                # 处理不可回答问题的答案标注
-                answer_str = a if not is_impossible else "NO_ANSWER"
-                f.write(f'        ("{q}", "{answer_str}"),\n')
-            f.write("    ],\n")
-        f.write("}\n")
-
-    print(f"✅ 已转换为sample_essay格式，输出路径：{output_path}")
+def main():
+    """Main function to process the dataset."""
+    # Configuration
+    INPUT_CSV = "train.csv"
+    OUTPUT_FILE = "processed_squad.py"
+    
+    print("=" * 60)
+    print("SQuAD Dataset Processor")
+    print("=" * 60)
+    
+    # Load data
+    print("\n[1/3] Loading CSV data...")
+    data = load_csv_data(INPUT_CSV)
+    
+    # Process data
+    print("\n[2/3] Processing dataset...")
+    contexts, questions = process_dataset(data)
+    
+    # Generate output
+    print("\n[3/3] Generating output file...")
+    generate_output_file(contexts, questions, OUTPUT_FILE)
+    
+    # Summary
+    print("\n" + "=" * 60)
+    print("SUMMARY")
+    print("=" * 60)
+    print(f"  - Unique titles: {len(contexts)}")
+    print(f"  - Total QA pairs: {sum(len(qa) for qa in questions.values())}")
+    print(f"  - Output file: {OUTPUT_FILE}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    # -------------------------- 配置参数 --------------------------
-    SQUAD_FILE_PATH = "train-v2.0.json"  # 替换为你的SQuAD2.0文件路径
-    OUTPUT_JSON_PATH = "processed_squad_titan.json"
-    OUTPUT_SAMPLE_FORMAT_PATH = "squad_sample_format.py"
-
-
-
-
-
-
-
-
+    main()
