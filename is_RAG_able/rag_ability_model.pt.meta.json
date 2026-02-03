@@ -1,0 +1,5 @@
+{
+  "embedder": "all-MiniLM-L6-v2",
+  "input_dim": 384,
+  "hidden_dim": 256
+}
