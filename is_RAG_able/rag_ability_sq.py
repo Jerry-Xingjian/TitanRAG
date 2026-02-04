@@ -12,49 +12,78 @@ class RAGAbilityDataset(Dataset):
     def __init__(self, data, targets):
         self.data = data  # List of sentences (strings)
         self.targets = targets  # List of labels (0/1 or float)
-import argparse
-import json
-import os
-from typing import List
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import TensorDataset, DataLoader
-from datasets import load_dataset
-from sentence_transformers import SentenceTransformer
+    def main():
+        import os
+        import sys
+        import argparse
+        import json
+        import re
+        sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+        try:
+            from main import TitanRAG  # 假设TitanRAG可直接import
+        except ImportError:
+            TitanRAG = None
 
-print("脚本已启动：is_RAG_able/train_rag_ability.py")
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--rag_model_path", type=str, default="is_RAG_able/rag_ability_model.pt", help="TitanRAG模型路径")
+        parser.add_argument("--data_path", type=str, default="data/train-v2.0.json", help="SQuAD格式数据集路径")
+        parser.add_argument("--output_path", type=str, default="data/answer_label_dataset.json", help="输出答案句-标签文件")
+        args = parser.parse_args()
 
+        device = None
+        try:
+            import torch
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            print(f"Using device: {device}")
+        except ImportError:
+            print("torch not installed, device not set")
 
-class MLPClassifier(nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int = 256, dropout: float = 0.1):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-        )
+        # 加载TitanRAG模型（此处需根据实际初始化方式调整）
+        # titan_model = ... # 加载底层模型
+        # rag = TitanRAG(titan_model)
+        rag = None  # TODO: 替换为实际TitanRAG实例
 
-    def forward(self, x):
-        return self.net(x).squeeze(-1)
+        # 加载SQuAD格式数据
+        with open(args.data_path, "r", encoding="utf-8") as f:
+            squad_data = json.load(f)
 
+        answer_label_data = []
+        for article in squad_data.get("data", []):
+            for para in article.get("paragraphs", []):
+                context = para.get("context", "")
+                for qa in para.get("qas", []):
+                    question = qa.get("question", "")
+                    # 1. 先用RAG推理
+                    rag_answer = None
+                    if rag is not None:
+                        # 伪代码：rag_answer = rag.query_with_context(question, ...)
+                        pass
+                    # 判断RAG是否能答（此处用rag_answer是否为空判断，实际需根据你的RAG输出逻辑调整）
+                    if rag_answer:
+                        answer_label_data.append({"text": rag_answer, "label": "可检索"})
+                    else:
+                        # 2. 检索原文段落，找标准答案
+                        answers = qa.get("answers", [])
+                        if answers:
+                            gold = answers[0].get("text", "")
+                            sents = re.split(r'[。！？!?.]', context)
+                            found = None
+                            for sent in sents:
+                                if gold in sent:
+                                    found = sent.strip()
+                                    break
+                            if found:
+                                answer_label_data.append({"text": found, "label": "不可检索"})
+                            else:
+                                answer_label_data.append({"text": gold, "label": "不可检索"})
+                        else:
+                            continue
 
-def prepare_data(sentences: List[str], labels: List[int], embedder: SentenceTransformer, device: torch.device):
-    # Compute sentence embeddings in batches
-    emb = embedder.encode(sentences, convert_to_tensor=True, device=device)
-    labels_t = torch.tensor(labels, dtype=torch.float32, device=device)
-    dataset = TensorDataset(emb, labels_t)
-    return dataset
-
-
-def train(model, dataloader, criterion, optimizer, device, epochs=5):
-    model.to(device)
-    for epoch in range(epochs):
+        # 保存结果
+        with open(args.output_path, "w", encoding="utf-8") as f:
+            json.dump(answer_label_data, f, ensure_ascii=False, indent=2)
+        print(f"已保存: {args.output_path}")
         model.train()
         total_loss = 0.0
         for xb, yb in dataloader:
