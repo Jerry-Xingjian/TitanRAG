@@ -1,5 +1,5 @@
 """
-Script to clean and process train.csv dataset.
+Script to clean and process SQuAD dataset (JSON or CSV format).
 
 This script:
 1. Filters out unique titles
@@ -7,6 +7,10 @@ This script:
 3. Extracts question and answer pairs for each context
 
 Output format matches sample_essays.py structure.
+
+Supports:
+- SQuAD v2.0 JSON format (train-v2.0.json)
+- CSV format (train.csv)
 """
 
 import csv
@@ -14,6 +18,8 @@ import ast
 import re
 import sys
 import io
+import json
+import os
 
 # Fix Windows console encoding
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -35,6 +41,45 @@ def load_csv_data(file_path: str) -> list:
         for row in reader:
             data.append(row)
     print(f"Loaded {len(data)} rows from CSV")
+    return data
+
+
+def load_json_data(file_path: str) -> list:
+    """
+    Load SQuAD v2.0 JSON dataset and convert to row format.
+    
+    Args:
+        file_path: Path to the JSON file (train-v2.0.json)
+        
+    Returns:
+        List of row dictionaries with keys: title, context, question, answers
+    """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        squad_data = json.load(f)
+    
+    data = []
+    for article in squad_data['data']:
+        title = article['title']
+        for paragraph in article['paragraphs']:
+            context = paragraph['context']
+            for qa in paragraph['qas']:
+                question = qa['question']
+                # Handle both v1 and v2 format
+                answers = qa.get('answers', [])
+                if not answers and 'plausible_answers' in qa:
+                    answers = qa['plausible_answers']
+                
+                # Convert to format expected by process_dataset
+                answer_text = answers[0]['text'] if answers else ''
+                data.append({
+                    'title': title,
+                    'context': context,
+                    'question': question,
+                    'answers': answer_text,  # Already parsed
+                    '_parsed': True  # Flag to skip parse_answer
+                })
+    
+    print(f"Loaded {len(data)} QA pairs from JSON")
     return data
 
 
@@ -68,7 +113,7 @@ def process_dataset(data: list) -> tuple:
     Process the dataset to extract unique titles, combined contexts, and QA pairs.
     
     Args:
-        data: List of row dictionaries from CSV
+        data: List of row dictionaries from CSV or JSON
         
     Returns:
         Tuple of (contexts_dict, questions_dict)
@@ -83,7 +128,12 @@ def process_dataset(data: list) -> tuple:
         title = row['title'].strip()
         context = row['context'].strip()
         question = row['question'].strip()
-        answer = parse_answer(row['answers'])
+        
+        # Check if answer is pre-parsed (from JSON) or needs parsing (from CSV)
+        if row.get('_parsed'):
+            answer = row['answers'].strip() if row['answers'] else ''
+        else:
+            answer = parse_answer(row['answers'])
         
         # Initialize title entry if not exists
         if title not in title_contexts:
@@ -209,17 +259,37 @@ def create_variable_name(title: str) -> str:
 
 def main():
     """Main function to process the dataset."""
-    # Configuration
+    # Configuration - auto-detect input format
+    INPUT_JSON = "train-v2.0.json"
     INPUT_CSV = "train.csv"
     OUTPUT_FILE = "processed_squad.py"
+    
+    # Get script directory for relative paths
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    output_path = os.path.join(script_dir, OUTPUT_FILE)
     
     print("=" * 60)
     print("SQuAD Dataset Processor")
     print("=" * 60)
     
-    # Load data
-    print("\n[1/3] Loading CSV data...")
-    data = load_csv_data(INPUT_CSV)
+    # Try to find input file (JSON or CSV)
+    json_path = os.path.join(script_dir, INPUT_JSON)
+    csv_path = os.path.join(script_dir, INPUT_CSV)
+    
+    # Load data - prefer JSON (official SQuAD format)
+    print("\n[1/3] Loading data...")
+    if os.path.exists(json_path):
+        print(f"Found JSON file: {INPUT_JSON}")
+        data = load_json_data(json_path)
+    elif os.path.exists(csv_path):
+        print(f"Found CSV file: {INPUT_CSV}")
+        data = load_csv_data(csv_path)
+    else:
+        print(f"❌ Error: No input file found!")
+        print(f"   Expected: {INPUT_JSON} or {INPUT_CSV} in {script_dir}")
+        print(f"\n   To download SQuAD v2.0:")
+        print(f"   wget https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v2.0.json")
+        return
     
     # Process data
     print("\n[2/3] Processing dataset...")
@@ -227,7 +297,7 @@ def main():
     
     # Generate output
     print("\n[3/3] Generating output file...")
-    generate_output_file(contexts, questions, OUTPUT_FILE)
+    generate_output_file(contexts, questions, output_path)
     
     # Summary
     print("\n" + "=" * 60)
@@ -235,7 +305,7 @@ def main():
     print("=" * 60)
     print(f"  - Unique titles: {len(contexts)}")
     print(f"  - Total QA pairs: {sum(len(qa) for qa in questions.values())}")
-    print(f"  - Output file: {OUTPUT_FILE}")
+    print(f"  - Output file: {output_path}")
     print("=" * 60)
 
 

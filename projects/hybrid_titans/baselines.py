@@ -118,6 +118,9 @@ class PureRAG(BaseRetriever):
             )
             
             # Fusion (no Memory!)
+            # Move BM25 scores to same device as embeddings
+            bm25_scores = bm25_scores.to(doc_embeddings.device)
+            
             fused_scores = (
                 self.bm25_weight * normalize_scores(bm25_scores) +
                 self.embed_weight * normalize_scores(embed_scores)
@@ -277,6 +280,9 @@ class HybridRAG(BaseRetriever):
             embed_weight /= total
             
             # Fusion with dynamic weights
+            # Move BM25 scores to same device
+            bm25_scores = bm25_scores.to(doc_embeddings.device)
+            
             fused_scores = (
                 bm25_weight * normalize_scores(bm25_scores) +
                 memory_weight * normalize_scores(memory_scores) +

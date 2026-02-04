@@ -171,9 +171,13 @@ def run_sample_essay_mode(args):
     
     # Initialize components
     print("\n📦 Loading components...")
-    embedder = SentenceTransformerEmbedder(target_dim=256)
-    llm = FlanT5Generator("google/flan-t5-large")
-    titan_rag = create_titan_rag(dim=256)
+    
+    # Import DEVICE from embedders or titan_utils
+    from common.embedders import DEVICE
+    
+    embedder = SentenceTransformerEmbedder(target_dim=256, device=DEVICE)
+    llm = FlanT5Generator("google/flan-t5-large", device=DEVICE)
+    titan_rag = create_titan_rag(dim=256, device=DEVICE)
     
     # Load essay
     text = ESSAYS[args.essay]
@@ -226,8 +230,11 @@ def run_squad_mode(args):
     
     # Initialize components
     print("\n📦 Loading components...")
-    embedder = SentenceTransformerEmbedder(target_dim=256)
-    llm = FlanT5Generator("google/flan-t5-large")
+    
+    from common.embedders import DEVICE
+    
+    embedder = SentenceTransformerEmbedder(target_dim=256, device=DEVICE)
+    llm = FlanT5Generator("google/flan-t5-large", device=DEVICE)
     
     # Select titles to evaluate
     all_titles = list(CONTEXTS.keys())

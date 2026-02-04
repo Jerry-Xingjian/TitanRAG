@@ -46,7 +46,9 @@ def get_b64_optional(path):
 def generate_notebook():
     """Generate the baseline comparison notebook."""
     
-    # Read all required files
+    print("  - Reading source files...")
+    
+    # Read all required files (small files only, skip large SQuAD data)
     main_b64 = get_b64_safe("src/main.py")
     embedders_b64 = get_b64_safe("projects/hybrid_titans/common/embedders.py")
     titan_utils_b64 = get_b64_safe("projects/hybrid_titans/common/titan_utils.py")
@@ -57,8 +59,10 @@ def generate_notebook():
     essays_b64 = get_b64_safe("data/sample_essays.py")
     init_b64 = base64.b64encode(b"# Common modules").decode("utf-8")
     
-    # Try to load processed_squad.py if it exists
-    squad_b64 = get_b64_optional("data/processed_squad.py")
+    # Check if processed_squad.py exists (but don't embed it - too large!)
+    squad_exists = os.path.exists("data/processed_squad.py") or os.path.exists("../data/processed_squad.py")
+    
+    print("  - Building notebook cells...")
     
     cells = []
     
@@ -76,7 +80,7 @@ def generate_notebook():
             "\n",
             "### Modes:\n",
             "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
-            "2. **SQuAD Mode**: Use processed SQuAD dataset (requires processed_squad.py)"
+            "2. **SQuAD Mode**: Use processed SQuAD dataset (requires setup)"
         ]
     })
     
@@ -97,11 +101,11 @@ def generate_notebook():
         ]
     })
     
-    # ===== Cell 3: Setup File System =====
+    # ===== Cell 3: Setup File System (small files only) =====
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
-        "source": ["## 2. Setup File System"]
+        "source": ["## 2. Setup File System (Core Files)"]
     })
     
     setup_code = [
@@ -117,8 +121,9 @@ def generate_notebook():
         "        os.makedirs(directory, exist_ok=True)\n",
         "    with open(target_path, 'wb') as f:\n",
         "        f.write(base64.b64decode(b64_content))\n",
-        "    print(f'Created {target_path}')\n",
+        "    print(f'✓ {path}')\n",
         "\n",
+        "# Core files (embedded for convenience)\n",
         "files = {\n",
         f"    'src/main.py': '{main_b64}',\n",
         f"    'data/sample_essays.py': '{essays_b64}',\n",
@@ -131,16 +136,12 @@ def generate_notebook():
         f"    'projects/hybrid_titans/compare_baselines.py': '{compare_b64}'\n",
         "}\n",
         "\n",
+        "print(f'Setting up {len(files)} core files...')\n",
         "for path, content in files.items():\n",
         "    write_file(path, content)\n",
         "\n",
-        "print('\\n✅ All files created!')\n"
+        "print('\\n✅ Core files ready!')\n"
     ]
-    
-    # Add processed_squad.py if it exists
-    if squad_b64:
-        setup_code.insert(-3, f"    'data/processed_squad.py': '{squad_b64}',\n")
-        setup_code.append("\nprint('📊 SQuAD dataset included!')\n")
     
     cells.append({
         "cell_type": "code",
@@ -148,6 +149,57 @@ def generate_notebook():
         "metadata": {},
         "outputs": [],
         "source": setup_code
+    })
+    
+    # ===== Cell 3.5: Setup SQuAD Data (auto-generate) =====
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 2.5 Setup SQuAD Dataset (Optional)\n",
+            "\n",
+            "This cell will automatically download and generate the SQuAD dataset.\n",
+            "**Skip this cell if you only want to use Sample Essays mode.**"
+        ]
+    })
+    
+    # Read process_squad_data.py and embed it
+    process_squad_b64 = get_b64_safe("data/process_squad_data.py")
+    
+    squad_setup_code = [
+        "import os\n",
+        "import base64\n",
+        "\n",
+        "# Check if SQuAD data already exists\n",
+        "if os.path.exists('data/processed_squad.py'):\n",
+        "    size_mb = os.path.getsize('data/processed_squad.py') / (1024 * 1024)\n",
+        "    print(f'✅ SQuAD dataset already exists ({size_mb:.1f} MB)')\n",
+        "else:\n",
+        "    print('📥 Downloading SQuAD dataset...')\n",
+        "    !wget -q --show-progress https://rajpurkar.github.io/SQuAD-explorer/dataset/train-v2.0.json -O data/train-v2.0.json\n",
+        "    \n",
+        "    # Write the processing script\n",
+        f"    script_b64 = '{process_squad_b64}'\n",
+        "    os.makedirs('data', exist_ok=True)\n",
+        "    with open('data/process_squad_data.py', 'wb') as f:\n",
+        "        f.write(base64.b64decode(script_b64))\n",
+        "    \n",
+        "    print('⚙️ Processing SQuAD data...')\n",
+        "    !python data/process_squad_data.py\n",
+        "    \n",
+        "    if os.path.exists('data/processed_squad.py'):\n",
+        "        size_mb = os.path.getsize('data/processed_squad.py') / (1024 * 1024)\n",
+        "        print(f'✅ SQuAD dataset generated ({size_mb:.1f} MB)')\n",
+        "    else:\n",
+        "        print('❌ Failed to generate SQuAD dataset')\n"
+    ]
+    
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": squad_setup_code
     })
     
     # ===== Cell 4: Run Sample Essays Comparison =====
@@ -195,10 +247,10 @@ def generate_notebook():
         "\n"
     ]
     
-    if squad_b64:
+    if squad_exists:
         squad_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 3 --epochs 20\n")
     else:
-        squad_cell_source.append("# Note: processed_squad.py not found. Run data/script.py first to generate it.\n")
+        squad_cell_source.append("# Note: SQuAD data not set up. Run cell 2.5 first to set up SQuAD.\n")
         squad_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 3 --epochs 20\n")
     
     cells.append({

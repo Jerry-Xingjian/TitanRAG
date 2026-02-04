@@ -14,7 +14,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 from main import TitanMAG, TitanMAC, TitanRAG
 
 # Detect device
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cpu")
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda")
+else:
+    try:
+        import torch_xla.core.xla_model as xm
+        DEVICE = xm.xla_device()
+        print(f"✅ TPU detected: using XLA device {DEVICE}")
+    except ImportError:
+        pass
 
 
 def create_titan_rag(dim=256, arch="MAG", window_size=32, memory_depth=3, 
@@ -70,7 +79,12 @@ def create_titan_rag(dim=256, arch="MAG", window_size=32, memory_depth=3,
     
     titan_rag = TitanRAG(base_model)
     
-    device_name = "GPU" if device.type == "cuda" else "CPU"
+    if str(device).startswith('xla'):
+        device_name = "TPU"
+    elif device.type == "cuda":
+        device_name = "GPU"
+    else:
+        device_name = "CPU"
     print(f"✅ Created TitanRAG with {arch} architecture (dim={dim}) on {device_name}")
     
     return titan_rag
