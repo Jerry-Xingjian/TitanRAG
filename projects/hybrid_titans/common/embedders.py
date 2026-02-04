@@ -7,28 +7,57 @@ import torch
 import torch.nn as nn
 
 
+# Detect device
+# Detect device
+DEVICE = torch.device("cpu")
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda")
+else:
+    try:
+        import torch_xla.core.xla_model as xm
+        DEVICE = xm.xla_device()
+        print(f"✅ TPU detected: using XLA device {DEVICE}")
+    except ImportError:
+        pass
+
+
 class SentenceTransformerEmbedder(nn.Module):
     """Semantic embedder using sentence-transformers."""
     
-    def __init__(self, model_name="all-MiniLM-L6-v2", target_dim=256):
+    def __init__(self, model_name="all-MiniLM-L6-v2", target_dim=256, device=None):
         super().__init__()
         from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(model_name)
+        
+        if device is None:
+            device = DEVICE
+        self.device = device
+        
+        # Force model to CPU to avoid XLA/TPU inference issues
+        # (RuntimeError: Cannot set version_counter for inference tensor)
+        self.cpu_device = "cpu"
+        self.model = SentenceTransformer(model_name, device=self.cpu_device)
         self.source_dim = self.model.get_sentence_embedding_dimension()
         self.target_dim = target_dim
         
         if self.source_dim != target_dim:
-            self.projection = nn.Linear(self.source_dim, target_dim)
+            self.projection = nn.Linear(self.source_dim, target_dim).to(device)
         else:
             self.projection = None
         
-        print(f"✅ Loaded SentenceTransformer: {model_name} (dim={self.source_dim})")
+        if str(device).startswith('xla'):
+            device_name = "TPU (Embedder on CPU)"
+        elif device.type == "cuda":
+            device_name = "GPU"
+        else:
+            device_name = "CPU"
+        print(f"✅ Loaded SentenceTransformer: {model_name} (dim={self.source_dim}) on {device_name}")
     
     def forward(self, text):
         """Embed text into a fixed-size vector."""
+        # Embed on CPU then move to target device (TPU/GPU)
         with torch.no_grad():
             embedding = self.model.encode(text, convert_to_tensor=True)
-            embedding = embedding.clone().cpu()
+            embedding = embedding.clone().to(self.device)
         
         if self.projection is not None:
             embedding = self.projection(embedding.float())
@@ -43,11 +72,13 @@ class SentenceTransformerEmbedder(nn.Module):
     
     def embed_batch(self, texts):
         """Embed a batch of texts."""
+        # Embed on CPU then move to target device (TPU/GPU)
         with torch.no_grad():
             embeddings = self.model.encode(texts, convert_to_tensor=True)
-            embeddings = embeddings.clone().cpu()
+            embeddings = embeddings.clone().to(self.device)
         
         if self.projection is not None:
             embeddings = self.projection(embeddings.float())
         
         return embeddings
+

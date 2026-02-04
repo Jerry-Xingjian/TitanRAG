@@ -12,62 +12,66 @@ This project explores the **Titans** architecture, a next-generation neural memo
     *   **MAG (Memory As Gating)**: Fuses Short-Term Attention and Long-Term Memory via a learned gate.
     *   **MAL (Memory As Layer)**: Processes tokens sequentially through memory before attention.
 *   **TitanRAG**: A specialized wrapper for RAG tasks. It "reads" retrieved documents by training on them for a few epochs before answering questions, effectively "baking" knowledge into the neural weights.
-*   **Hybrid Retrieval**: Combines **Keyword Search** + **Neural Memory Search** + **Embedding Search** (Ensemble Fusion) for robust context retrieval.
+*   **Hybrid Retrieval**: Combines **Keyword Search (BM25)** + **Neural Memory Search** + **Embedding Search** (Ensemble Fusion) for robust context retrieval.
+*   **Device Agnostic**: Fully supports **TPU (Google Colab)**, **GPU (CUDA)**, and **CPU** execution with automatic detection.
 
 ## 📂 Directory Structure
 
 ```
 TitanRAG
-├── src/                # Core Source Code
-│   └── main.py         # Titans Model Implementation (DeepMemoryModule, TitanMAC/MAG/MAL)
-├── data/               # Data and Assets
-│   └── sample_essays.py # Sample essays for experiments
-├── projects/           # Demos and Experiments
-│   ├── hybrid_titans/  # Hybrid RAG Experiments (TitanRAG + Flan-T5)
-│   └── original_benchmarks/ # Basic functionality tests
-├── scripts/            # Utility Scripts
-│   ├── generate_notebook_script.py # Generates Colab notebook
-│   └── Titan_Colab_Runner.py
-├── docs/               # Documentation
-│   ├── Research_Directions.md
-│   ├── TitanRAG_Research_Plan_CN.md
-│   └── Walkthrough_Threshold.md
-└── notebooks/          # Processed Notebooks
-    └── Titan_Experiment.ipynb
+├── src/                    # Core Titans Architecture
+│   └── main.py             # DeepMemoryModule & TitanMAC/MAG/MAL models
+├── data/                   # Data Management
+│   ├── process_squad_data.py # SQuAD v2.0 downloader & processor
+│   ├── processed_squad.py    # Generated SQuAD data file (auto-created)
+│   └── sample_essays.py      # Sample essays for quick demos
+├── projects/               # Experiments & Implementations
+│   └── hybrid_titans/      # Hybrid RAG Implementation
+│       ├── baselines.py    # Retrieval strategies (PureRAG, TitanOnly, Hybrid)
+│       ├── compare_baselines.py # Main evaluation script
+│       ├── common/         # Shared utilities (Embedders, LLM wrappers, TPU helpers)
+│       └── ...
+├── scripts/                # Utility & Notebook Generators
+│   ├── generate_baseline_notebook.py # Generates Baseline_Comparison.ipynb
+│   └── generate_notebook_script.py   # Generates Titan_Experiment.ipynb
+├── notebooks/              # User Notebooks
+│   ├── Baseline_Comparison.ipynb # Main Evaluation Notebook
+│   └── Titan_Experiment.ipynb    # Core Feature Demo
+└── ...
 ```
 
-## 🛠️ Quick Start (VS Code & Colab)
+## 🛠️ Data Preparation
 
-To run the experiments using the self-contained notebook:
+The project uses the **SQuAD v2.0** dataset for evaluation.
 
-1.  **Setup VS Code**: Install the **Colab** (or Jupyter) extension in VS Code.
-2.  **Generate Notebook**: Run the following script to generate the self-contained experiment notebook:
+*   **Automatic**: The scripts (and notebooks) will automatically detect if data is missing and download/process it for you.
+*   **Manual**: You can run the processor manually to generate the dataset file:
     ```bash
-    python scripts/generate_notebook_script.py
+    python3 data/process_squad_data.py
     ```
-    This will generate `Titan_Experiment.ipynb`.
-3.  **Run**: Open `Titan_Experiment.ipynb` in VS Code (or upload to Google Colab) and run all cells. The notebook automates environment setup and experiment execution.
-    > **Important**: If you modify any source code locally, you must:
-    > 1. Re-run `python scripts/generate_notebook_script.py` to update the notebook.
-    > 2. In Colab/VS Code, re-run the **"Setup File System"** cell (or restart the kernel) to propagate changes to the environment.
+    This will:
+    1.  Download `train-v2.0.json`.
+    2.  Process it into a clean format.
+    3.  Save it as `data/processed_squad.py` for easy import.
 
-> **Note**: You can also run locally using the scripts in `projects/`, but you will need a CUDA-ready environment with `deepspeed` installed.
+## 📊 Running Baseline Comparison
 
-## Running Baseline Comparison
+Compare three retrieval strategies: **PureRAG** (BM25+Embedding), **TitanOnly** (Memory), and **HybridRAG** (All combined).
 
-To compare different retrieval strategies (PureRAG vs TitanOnly vs HybridRAG), run the `compare_baselines.py` script:
+### 1. 📓 In Google Colab (Recommended)
+This is the easiest way to run the experiments, especially with free **TPU** acceleration.
 
-### 📓 Running in Colab
-
-To run the comparison in Google Colab (or any notebook environment), regenerate the self-contained notebook:
-
-1.  **Generate Notebook**:
+1.  **Generate the Notebook**:
+    Run this local script to package all latest code into a single notebook file:
     ```bash
-    python scripts/generate_baseline_notebook.py
+    python3 scripts/generate_baseline_notebook.py
     ```
-    This creates `notebooks/Baseline_Comparison.ipynb`.
+    > Output: `notebooks/Baseline_Comparison.ipynb`
 
-2.  **Run**: Upload the notebook to Colab and run all cells. It packages all necessary code (Titans implementation, essay data, etc.) into the notebook itself.
+2.  **Run in Colab**:
+    *   Upload `Baseline_Comparison.ipynb` to Google Colab.
+    *   Set Runtime type to **GPU**.
+    *   Run all cells. The notebook handles data setup and installation automatically.
 
 ### Running locally (Conda / Anaconda)
 1. Create a virtual environment: `conda create -n titan-env python=3.10`
@@ -79,11 +83,9 @@ To run the comparison in Google Colab (or any notebook environment), regenerate 
 ## 🔬 Research & Experiments
 
 *   **[Research Plan (CN)](docs/TitanRAG_Research_Plan_CN.md)**: Detailed roadmap for investigating TitanRAG.
-*   **[Walkthrough: Sparse Update](docs/Walkthrough_Threshold.md)**: Analysis of using a "Surprise Threshold" to skip redundant memory updates.
-*   **[Research Directions](docs/Research_Directions.md)**: Future ideas including Meta-Optimization and Hierarchical Memory.
+*   **[Walkthrough: Sparse Update](docs/Walkthrough_Threshold.md)**: Analysis of "Surprise Threshold" for efficient memory updates.
 
 ## 📄 Reference
 Based on the paper:
-**Titans: Learning to Memorize at Test Time**
-*Google Research*
+**Titans: Learning to Memorize at Test Time** (Google Research)
 [https://arxiv.org/pdf/2501.00663v1](https://arxiv.org/pdf/2501.00663v1)
