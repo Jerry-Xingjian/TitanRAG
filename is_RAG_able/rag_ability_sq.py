@@ -56,11 +56,14 @@ def generate_answer_label_dataset(data_path, output_path):
                 # RAG推理
                 try:
                     rag_answer_emb = rag.query_with_context(q_emb, [c_emb])
-                    # 解码为文本
                     rag_answer_ids = torch.argmax(rag_answer_emb, dim=-1)
                     rag_answer = tokenizer.decode(rag_answer_ids[0], skip_special_tokens=True)
-                except Exception:
+                except Exception as e:
+                    print(f"[RAG ERROR] question: {question}\ncontext: {context[:50]}...\nException: {e}")
                     rag_answer = None
+                print(f"[DEBUG] Q: {question}")
+                print(f"[DEBUG] RAG Answer: {rag_answer}")
+                print(f"[DEBUG] Context: {context[:50]}...")
                 if rag_answer and rag_answer.strip():
                     answer_label_data.append({"text": rag_answer.strip(), "label": "可检索"})
                 else:
