@@ -10,6 +10,7 @@ import numpy as np
 from sklearn.preprocessing import LabelBinarizer
 from sklearn.preprocessing import StandardScaler
 import torch.nn.functional as F
+from scipy.spatial.distance import euclidean, cityblock
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 
@@ -17,9 +18,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, default="data/answer_label_dataset_balanced.json")
     parser.add_argument("--embedder", type=str, default="all-MiniLM-L6-v2")
-    parser.add_argument("--epochs", type=int, default=40)
+    parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--save_path", type=str, default="is_RAG_able/train_test_model.pt")
     args = parser.parse_args()
 
@@ -32,26 +33,33 @@ def main():
         text_tfidf = vectorizer.transform(texts)
         q_tfidf = vectorizer.transform(questions)
         scores = (q_tfidf * text_tfidf.T).toarray()
-        return np.diag(scores), scores
+        return np.diag(scores), scores, q_tfidf, text_tfidf
 
     def compute_cosine_sim(q_embs, s_embs):
         q_norm = q_embs / (np.linalg.norm(q_embs, axis=1, keepdims=True) + 1e-8)
         s_norm = s_embs / (np.linalg.norm(s_embs, axis=1, keepdims=True) + 1e-8)
         return np.sum(q_norm * s_norm, axis=1, keepdims=True)
 
-    def extract_question_type(qs):
-        types = []
-        for q in qs:
-            q = q.strip()
-            if q.startswith("什么"): types.append("what")
-            elif q.startswith("谁"): types.append("who")
-            elif q.startswith("多少") or q.startswith("几"): types.append("how_many")
-            elif q.startswith("哪"): types.append("which")
-            elif q.startswith("为何") or q.startswith("为什么"): types.append("why")
-            elif q.startswith("何时") or q.startswith("什么时候"): types.append("when")
-            else: types.append("other")
-        lb = LabelBinarizer()
-        return lb.fit_transform(types)
+    def compute_euclidean(q_embs, s_embs):
+        return np.linalg.norm(q_embs - s_embs, axis=1, keepdims=True)
+
+    def compute_manhattan(q_embs, s_embs):
+        return np.sum(np.abs(q_embs - s_embs), axis=1, keepdims=True)
+
+    def compute_jaccard(qs, ss):
+        def jaccard(a, b):
+            set_a = set(a.split())
+            set_b = set(b.split())
+            if not set_a or not set_b:
+                return 0.0
+            return len(set_a & set_b) / len(set_a | set_b)
+        return np.array([jaccard(q, s) for q, s in zip(qs, ss)]).reshape(-1, 1)
+
+    def compute_tfidf_cosine(q_tfidf, text_tfidf):
+        # q_tfidf, text_tfidf: sparse matrices
+        from sklearn.metrics.pairwise import cosine_similarity
+        sims = cosine_similarity(q_tfidf, text_tfidf)
+        return np.diag(sims).reshape(-1, 1)
 
     with open(args.data_path, "r", encoding="utf-8") as f:
         labeled_data = json.load(f)
@@ -68,19 +76,36 @@ def main():
     # 特征增强
     q_lens = np.array([len(q) for q in questions]).reshape(-1, 1)
     gold_lens = np.array([len(g) for g in golds]).reshape(-1, 1)
-    bm25_diag, bm25_matrix = compute_bm25_scores(questions, sentences)
+    bm25_diag, bm25_matrix, q_tfidf, text_tfidf = compute_bm25_scores(questions, sentences)
     bm25_diag = bm25_diag.reshape(-1, 1)
     bm25_rank = np.argsort(-bm25_matrix, axis=1)[:, 0].reshape(-1, 1)
     emb_np = emb.cpu().numpy() if hasattr(emb, 'cpu') else emb
     q_emb_np = q_emb.cpu().numpy() if hasattr(q_emb, 'cpu') else q_emb
     cos_sim = compute_cosine_sim(q_emb_np, emb_np)
-    # gold answer是否为chunk子串
-    gold_in_chunk = np.array([(g in s) for g, s in zip(golds, sentences)], dtype=np.float32).reshape(-1, 1)
+    eu_dist = compute_euclidean(q_emb_np, emb_np)
+    man_dist = compute_manhattan(q_emb_np, emb_np)
+    jaccard_sim = compute_jaccard(questions, sentences)
+    tfidf_cos = compute_tfidf_cosine(q_tfidf, text_tfidf)
     # 问题类型one-hot
+    def extract_question_type(qs):
+        types = []
+        for q in qs:
+            q = q.strip()
+            if q.startswith("什么"): types.append("what")
+            elif q.startswith("谁"): types.append("who")
+            elif q.startswith("多少") or q.startswith("几"): types.append("how_many")
+            elif q.startswith("哪"): types.append("which")
+            elif q.startswith("为何") or q.startswith("为什么"): types.append("why")
+            elif q.startswith("何时") or q.startswith("什么时候"): types.append("when")
+            else: types.append("other")
+        lb = LabelBinarizer()
+        return lb.fit_transform(types)
     q_type_oh = extract_question_type(questions)
     # 标准化数值特征
+    num_feats = np.concatenate([
+        q_lens, gold_lens, bm25_diag, bm25_rank, cos_sim, eu_dist, man_dist, jaccard_sim, tfidf_cos
+    ], axis=1)
     scaler = StandardScaler()
-    num_feats = np.concatenate([q_lens, gold_lens, bm25_diag, bm25_rank, cos_sim, gold_in_chunk], axis=1)
     num_feats = scaler.fit_transform(num_feats)
     features = np.concatenate([emb_np, num_feats, q_type_oh], axis=1)
     features_t = torch.tensor(features, dtype=torch.float32, device=device)
@@ -92,31 +117,28 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
     input_dim = features.shape[1]
-    # 更深的MLP+BatchNorm+GELU
+    # 更深的MLP+BatchNorm+GELU+残差
     class MLPClassifier(nn.Module):
         def __init__(self, input_dim, hidden_dim=2048, dropout=0.2):
             super().__init__()
-            self.net = nn.Sequential(
-                nn.Linear(input_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.BatchNorm1d(hidden_dim),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim, hidden_dim // 2),
-                nn.BatchNorm1d(hidden_dim // 2),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim // 2, hidden_dim // 4),
-                nn.BatchNorm1d(hidden_dim // 4),
-                nn.GELU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim // 4, 1),
-            )
+            self.fc1 = nn.Linear(input_dim, hidden_dim)
+            self.bn1 = nn.BatchNorm1d(hidden_dim)
+            self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+            self.bn2 = nn.BatchNorm1d(hidden_dim)
+            self.fc3 = nn.Linear(hidden_dim, hidden_dim // 2)
+            self.bn3 = nn.BatchNorm1d(hidden_dim // 2)
+            self.fc4 = nn.Linear(hidden_dim // 2, hidden_dim // 4)
+            self.bn4 = nn.BatchNorm1d(hidden_dim // 4)
+            self.fc5 = nn.Linear(hidden_dim // 4, 1)
+            self.dropout = nn.Dropout(dropout)
         def forward(self, x):
-            return self.net(x).squeeze(-1)
+            x1 = F.gelu(self.bn1(self.fc1(x)))
+            x2 = F.gelu(self.bn2(self.fc2(x1))) + x1  # 残差
+            x3 = F.gelu(self.bn3(self.fc3(x2)))
+            x4 = F.gelu(self.bn4(self.fc4(x3)))
+            x4 = self.dropout(x4)
+            out = self.fc5(x4)
+            return out.squeeze(-1)
     model = MLPClassifier(input_dim=input_dim)
     model.to(device)
     class_weight = torch.tensor([1.0, 1.0], device=device)
