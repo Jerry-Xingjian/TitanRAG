@@ -5,68 +5,127 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.preprocessing import StandardScaler
+import torch.nn.functional as F
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, accuracy_score
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="data/answer_label_dataset.json")
+    parser.add_argument("--data_path", type=str, default="data/answer_label_dataset_balanced.json")
     parser.add_argument("--embedder", type=str, default="all-MiniLM-L6-v2")
-    parser.add_argument("--epochs", type=int, default=3)
+    parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--save_path", type=str, default="is_RAG_able/train_test_model.pt")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     print(f"加载标注数据集 {args.data_path} ...")
+    # 特征增强：拼接句向量+问题长度+gold长度+BM25分数+embedding余弦相似度
+    def compute_bm25_scores(questions, texts):
+        vectorizer = TfidfVectorizer().fit(texts + questions)
+        text_tfidf = vectorizer.transform(texts)
+        q_tfidf = vectorizer.transform(questions)
+        scores = (q_tfidf * text_tfidf.T).toarray()
+        return np.diag(scores), scores
+
+    def compute_cosine_sim(q_embs, s_embs):
+        q_norm = q_embs / (np.linalg.norm(q_embs, axis=1, keepdims=True) + 1e-8)
+        s_norm = s_embs / (np.linalg.norm(s_embs, axis=1, keepdims=True) + 1e-8)
+        return np.sum(q_norm * s_norm, axis=1, keepdims=True)
+
+    def extract_question_type(qs):
+        types = []
+        for q in qs:
+            q = q.strip()
+            if q.startswith("什么"): types.append("what")
+            elif q.startswith("谁"): types.append("who")
+            elif q.startswith("多少") or q.startswith("几"): types.append("how_many")
+            elif q.startswith("哪"): types.append("which")
+            elif q.startswith("为何") or q.startswith("为什么"): types.append("why")
+            elif q.startswith("何时") or q.startswith("什么时候"): types.append("when")
+            else: types.append("other")
+        lb = LabelBinarizer()
+        return lb.fit_transform(types)
+
     with open(args.data_path, "r", encoding="utf-8") as f:
         labeled_data = json.load(f)
     sentences = [item["text"] for item in labeled_data]
     labels = [1 if item["label"] == "可检索" else 0 for item in labeled_data]
+    questions = [item.get("question", "") for item in labeled_data]
+    golds = [item.get("gold", "") for item in labeled_data]
     print(f"样本数量: {len(sentences)}")
-
-    # 划分训练集和测试集
-    X_train, X_test, y_train, y_test = train_test_split(
-        sentences, labels, test_size=0.2, random_state=42, stratify=labels
-    )
-    print(f"训练集: {len(X_train)}，测试集: {len(X_test)}")
-
     print("加载句向量模型：", args.embedder)
     embedder = SentenceTransformer(args.embedder)
-    print("计算训练集嵌入向量...")
-    X_train_emb = embedder.encode(X_train, convert_to_tensor=True, device=device)
-    print("计算测试集嵌入向量...")
-    X_test_emb = embedder.encode(X_test, convert_to_tensor=True, device=device)
-    y_train_t = torch.tensor(y_train, dtype=torch.float32, device=device)
-    y_test_t = torch.tensor(y_test, dtype=torch.float32, device=device)
-
-    train_dataset = TensorDataset(X_train_emb, y_train_t)
-    test_dataset = TensorDataset(X_test_emb, y_test_t)
+    print("计算嵌入向量...")
+    emb = embedder.encode(sentences, convert_to_tensor=True, device=device)
+    q_emb = embedder.encode(questions, convert_to_tensor=True, device=device)
+    # 特征增强
+    q_lens = np.array([len(q) for q in questions]).reshape(-1, 1)
+    gold_lens = np.array([len(g) for g in golds]).reshape(-1, 1)
+    bm25_diag, bm25_matrix = compute_bm25_scores(questions, sentences)
+    bm25_diag = bm25_diag.reshape(-1, 1)
+    bm25_rank = np.argsort(-bm25_matrix, axis=1)[:, 0].reshape(-1, 1)
+    emb_np = emb.cpu().numpy() if hasattr(emb, 'cpu') else emb
+    q_emb_np = q_emb.cpu().numpy() if hasattr(q_emb, 'cpu') else q_emb
+    cos_sim = compute_cosine_sim(q_emb_np, emb_np)
+    # gold answer是否为chunk子串
+    gold_in_chunk = np.array([(g in s) for g, s in zip(golds, sentences)], dtype=np.float32).reshape(-1, 1)
+    # 问题类型one-hot
+    q_type_oh = extract_question_type(questions)
+    # 标准化数值特征
+    scaler = StandardScaler()
+    num_feats = np.concatenate([q_lens, gold_lens, bm25_diag, bm25_rank, cos_sim, gold_in_chunk], axis=1)
+    num_feats = scaler.fit_transform(num_feats)
+    features = np.concatenate([emb_np, num_feats, q_type_oh], axis=1)
+    features_t = torch.tensor(features, dtype=torch.float32, device=device)
+    labels_t = torch.tensor(labels, dtype=torch.float32, device=device)
+    from sklearn.model_selection import train_test_split
+    X_train, X_test, y_train, y_test = train_test_split(features_t, labels_t, test_size=0.2, random_state=42, stratify=labels)
+    train_dataset = TensorDataset(X_train, y_train)
+    test_dataset = TensorDataset(X_test, y_test)
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
-
-    input_dim = X_train_emb.size(-1)
+    input_dim = features.shape[1]
+    # 更深的MLP+BatchNorm+GELU
     class MLPClassifier(nn.Module):
-        def __init__(self, input_dim, hidden_dim=256, dropout=0.1):
+        def __init__(self, input_dim, hidden_dim=2048, dropout=0.2):
             super().__init__()
             self.net = nn.Sequential(
                 nn.Linear(input_dim, hidden_dim),
-                nn.ReLU(),
+                nn.BatchNorm1d(hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                nn.GELU(),
                 nn.Dropout(dropout),
                 nn.Linear(hidden_dim, hidden_dim // 2),
-                nn.ReLU(),
+                nn.BatchNorm1d(hidden_dim // 2),
+                nn.GELU(),
                 nn.Dropout(dropout),
-                nn.Linear(hidden_dim // 2, 1),
+                nn.Linear(hidden_dim // 2, hidden_dim // 4),
+                nn.BatchNorm1d(hidden_dim // 4),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim // 4, 1),
             )
         def forward(self, x):
             return self.net(x).squeeze(-1)
-
     model = MLPClassifier(input_dim=input_dim)
     model.to(device)
-    criterion = nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    class_weight = torch.tensor([1.0, 1.0], device=device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=class_weight[0])
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    # 早停
+    best_loss = float('inf')
+    patience = 5
+    patience_counter = 0
 
     print("开始训练...")
     for epoch in range(args.epochs):
@@ -83,6 +142,29 @@ def main():
             total_loss += loss.item() * xb.size(0)
         avg = total_loss / len(train_loader.dataset)
         print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg:.4f}")
+        # 早停监控
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad():
+            for xb, yb in test_loader:
+                xb = xb.to(device)
+                yb = yb.to(device)
+                logits = model(xb)
+                loss = criterion(logits, yb)
+                val_loss += loss.item() * xb.size(0)
+        val_avg = val_loss / len(test_loader.dataset)
+        print(f"  Validation Loss: {val_avg:.4f}")
+        if val_avg < best_loss:
+            best_loss = val_avg
+            patience_counter = 0
+            torch.save(model.state_dict(), args.save_path)
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print("Early stopping triggered.")
+                break
+    # 训练结束后加载最佳模型
+    model.load_state_dict(torch.load(args.save_path))
 
     print("保存模型...")
     meta = {"embedder": args.embedder, "input_dim": input_dim, "hidden_dim": 256}
@@ -92,8 +174,22 @@ def main():
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print(f"保存完成: {args.save_path}")
 
-    # 测试集评估
+    # 训练集评估
     model.eval()
+    all_train_preds = []
+    all_train_labels = []
+    with torch.no_grad():
+        for xb, yb in train_loader:
+            xb = xb.to(device)
+            logits = model(xb)
+            probs = torch.sigmoid(logits)
+            preds = (probs > 0.5).long().cpu().numpy()
+            all_train_preds.extend(preds.tolist())
+            all_train_labels.extend(yb.cpu().numpy().tolist())
+    train_acc = accuracy_score(all_train_labels, all_train_preds)
+    train_report = classification_report(all_train_labels, all_train_preds, target_names=["不可检索", "可检索"])
+
+    # 测试集评估
     all_preds = []
     all_labels = []
     with torch.no_grad():
@@ -106,9 +202,20 @@ def main():
             all_labels.extend(yb.cpu().numpy().tolist())
     acc = accuracy_score(all_labels, all_preds)
     report = classification_report(all_labels, all_preds, target_names=["不可检索", "可检索"])
+    print(f"\nTrain Accuracy: {train_acc:.4f}")
+    print("Train Classification Report:")
+    print(train_report)
     print(f"\nTest Accuracy: {acc:.4f}")
-    print("Classification Report:")
+    print("Test Classification Report:")
     print(report)
+    # 保存到文件
+    with open("is_RAG_able/test_report.txt", "w", encoding="utf-8") as f:
+        f.write(f"Train Accuracy: {train_acc:.4f}\n")
+        f.write("Train Classification Report:\n")
+        f.write(train_report + "\n")
+        f.write(f"Test Accuracy: {acc:.4f}\n")
+        f.write("Test Classification Report:\n")
+        f.write(report)
 
 if __name__ == "__main__":
     main()

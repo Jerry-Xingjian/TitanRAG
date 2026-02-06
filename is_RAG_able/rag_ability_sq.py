@@ -1,96 +1,88 @@
 import os
 import sys
-sys.path.append(os.path.abspath("src"))
-import torch
-from transformers import AutoTokenizer
-import main
-TitanMAC = main.TitanMAC
-TitanMAG = main.TitanMAG
-TitanMAL = main.TitanMAL
-TitanModelForLM = main.TitanModelForLM
-TitanRAG = main.TitanRAG
-import argparse
 import json
-import re
+import argparse
+import torch
+from tqdm import tqdm
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../projects/hybrid_titans/common')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../projects/hybrid_titans')))
+from embedders import SentenceTransformerEmbedder
+from text_utils import split_into_chunks
+from baselines import PureRAG
 
-def generate_answer_label_dataset(data_path, output_path):
-    # 参数设置（可根据实际情况调整）
-    dim = 1024
-    hidden_dim = 1024
-    memory_depth = 3
-    num_persistent_tokens = 4
-    window_size = 256
-    threshold = 0.0
-    chunk_size = 256
-    vocab_size = 32000
-    tokenizer_name = "EleutherAI/gpt-neox-20b"
-    model_variant = "MAC"
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def clean_and_prepare_squad(squad_path, min_chunk_len=30, sentences_per_chunk=3, overlap_sentences=1):
+    with open(squad_path, "r", encoding="utf-8") as f:
+        squad = json.load(f)
+    samples = []
+    for article in squad["data"]:
+        for para in article["paragraphs"]:
+            context = para["context"]
+            # 切分chunks
+            chunks = split_into_chunks(context, min_length=min_chunk_len, sentences_per_chunk=sentences_per_chunk, overlap_sentences=overlap_sentences)
+            if not chunks:
+                continue
+            for qa in para["qas"]:
+                # 只保留有答案的样本
+                answers = qa.get("answers", [])
+                if not answers or not answers[0].get("text", "").strip():
+                    continue
+                question = qa["question"].strip()
+                gold = answers[0]["text"].strip()
+                samples.append({
+                    "question": question,
+                    "gold": gold,
+                    "chunks": chunks
+                })
+    return samples
 
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_fast=True)
-    vocab_size = max(tokenizer.get_vocab().values()) + 1  # 真实embedding大小
-    if model_variant == "MAC":
-        titan_module = TitanMAC(dim, chunk_size, hidden_dim, memory_depth, num_persistent_tokens, threshold=threshold)
-    elif model_variant == "MAG":
-        titan_module = TitanMAG(dim, hidden_dim, memory_depth, num_persistent_tokens, window_size, threshold=threshold)
-    else:
-        titan_module = TitanMAL(dim, hidden_dim, memory_depth, num_persistent_tokens, window_size, threshold=threshold)
-    titan_model = TitanModelForLM(titan_module, vocab_size, dim)
-    rag = TitanRAG(titan_model)
-    rag.to(device)
-
-    with open(data_path, "r", encoding="utf-8") as f:
-        squad_data = json.load(f)
-    answer_label_data = []
-    for article in squad_data.get("data", []):
-        for para in article.get("paragraphs", []):
-            context = para.get("context", "")
-            for qa in para.get("qas", []):
-                question = qa.get("question", "")
-                # 分词并转tensor
-                q_ids = tokenizer(question, return_tensors="pt", truncation=True, max_length=256)["input_ids"].to(device)
-                c_ids = tokenizer(context, return_tensors="pt", truncation=True, max_length=1024)["input_ids"].to(device)
-                # embedding
-                q_emb = titan_model.emb(q_ids).unsqueeze(0)  # [1, seq_len, dim]
-                c_emb = titan_model.emb(c_ids).unsqueeze(0)
-                # RAG推理
-                try:
-                    rag_answer_emb = rag.query_with_context(q_emb, [c_emb])
-                    rag_answer_ids = torch.argmax(rag_answer_emb, dim=-1)
-                    rag_answer = tokenizer.decode(rag_answer_ids[0], skip_special_tokens=True)
-                except Exception as e:
-                    print(f"[RAG ERROR] question: {question}\ncontext: {context[:50]}...\nException: {e}")
-                    rag_answer = None
-                print(f"[DEBUG] Q: {question}")
-                print(f"[DEBUG] RAG Answer: {rag_answer}")
-                print(f"[DEBUG] Context: {context[:50]}...")
-                if rag_answer and rag_answer.strip():
-                    answer_label_data.append({"text": rag_answer.strip(), "label": "可检索"})
-                else:
-                    answers = qa.get("answers", [])
-                    if answers:
-                        gold = answers[0].get("text", "")
-                        sents = re.split(r'[。！？!?.]', context)
-                        found = None
-                        for sent in sents:
-                            if gold in sent:
-                                found = sent.strip()
-                                break
-                        if found:
-                            answer_label_data.append({"text": found, "label": "不可检索"})
-                        else:
-                            answer_label_data.append({"text": gold, "label": "不可检索"})
-                    else:
-                        continue
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(answer_label_data, f, ensure_ascii=False, indent=2)
-    print(f"已保存: {output_path}")
-    return output_path
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Generate answer label dataset for TitanRAG")
-    parser.add_argument("--data_path", type=str, required=True, help="Path to the input data (SQuAD format)")
-    parser.add_argument("--output_path", type=str, required=True, help="Path to the output label dataset")
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_path", type=str, default="data/train-v2.0.json")
+    parser.add_argument("--output_path", type=str, default="data/answer_label_dataset.json")
+    parser.add_argument("--embedder", type=str, default="all-MiniLM-L6-v2")
+    parser.add_argument("--target_dim", type=int, default=256)
+    parser.add_argument("--topk", type=int, default=3)
     args = parser.parse_args()
 
-    generate_answer_label_dataset(args.data_path, args.output_path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    print("清洗并准备SQuAD数据...")
+    samples = clean_and_prepare_squad(args.data_path)
+    print(f"有效样本数: {len(samples)}")
+
+    print("加载句向量模型...")
+    embedder = SentenceTransformerEmbedder(args.embedder, target_dim=args.target_dim)
+    rag = PureRAG(embedder, llm_generator=None)  # 不生成答案，只做检索
+
+    answer_label_data = []
+    for sample in tqdm(samples, desc="RAG检索与标注"):
+        question = sample["question"]
+        gold = sample["gold"]
+        chunks = sample["chunks"]
+        # 计算chunks embedding
+        chunk_embs = embedder.embed_batch(chunks)
+        # PureRAG检索
+        context, details = rag.retrieve(question, chunks, chunk_embs, topk=1)
+        # 更严格：只允许top1 chunk完全包含gold answer才算可检索
+        top_chunk = context
+        if gold.strip() == top_chunk.strip() or gold in top_chunk:
+            label = "可检索"
+        else:
+            label = "不可检索"
+        answer_label_data.append({"text": top_chunk, "label": label, "question": question, "gold": gold})
+
+    # 欠采样可检索样本，使两类数量平衡
+    import random
+    can = [item for item in answer_label_data if item["label"] == "可检索"]
+    cannot = [item for item in answer_label_data if item["label"] == "不可检索"]
+    if len(can) > len(cannot):
+        random.seed(42)
+        can = random.sample(can, len(cannot))
+    balanced_data = can + cannot
+    random.shuffle(balanced_data)
+    with open(args.output_path, "w", encoding="utf-8") as f:
+        json.dump(balanced_data, f, ensure_ascii=False, indent=2)
+    print(f"已保存: {args.output_path} (平衡后样本数: {len(balanced_data)})")
+
+if __name__ == "__main__":
+    main()
