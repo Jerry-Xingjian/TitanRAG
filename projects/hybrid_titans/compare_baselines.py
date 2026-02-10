@@ -11,8 +11,11 @@ Usage:
     # Use sample essays (original mode)
     python compare_baselines.py --essay climate --epochs 50
     
-    # Use SQuAD dataset (new mode)
+    # Use SQuAD dataset (single-doc per title)
     python compare_baselines.py --squad --titles 10 --epochs 50
+    
+    # Multi-document: shared memory across articles
+    python compare_baselines.py --multi-doc --group-size 5 --epochs 50
 """
 
 import argparse
@@ -332,31 +335,172 @@ def run_squad_mode(args):
             print(f"  {name:12s}: {bar} {accuracy:.1f}% ({stats['correct']}/{stats['total']})")
 
 
+def run_multidoc_mode(args):
+    """Run comparison with multiple articles digested into shared memory."""
+    CONTEXTS, TEST_QUESTIONS = load_squad_data()
+
+    print("=" * 60)
+    print("BASELINE COMPARISON: Multi-Document Cross-Article Retrieval")
+    print(f"Mode: SQuAD Multi-Doc (group_size={args.group_size})")
+    print("=" * 60)
+
+    # Initialize components
+    print("\n📦 Loading components...")
+    from common.embedders import DEVICE
+
+    embedder = SentenceTransformerEmbedder(target_dim=256, device=DEVICE)
+    llm = FlanT5Generator("google/flan-t5-large", device=DEVICE)
+
+    # Select titles
+    all_titles = list(CONTEXTS.keys())
+    random.seed(42)
+    if args.group_size >= len(all_titles):
+        selected_titles = all_titles
+    else:
+        selected_titles = random.sample(all_titles, args.group_size)
+
+    print(f"   Total titles available: {len(all_titles)}")
+    print(f"   Selected for multi-doc group: {len(selected_titles)}")
+    for t in selected_titles:
+        print(f"     - {t}")
+
+    # ---- Build global chunk pool ----
+    print("\n📄 Building global chunk pool...")
+    all_chunks = []          # global list of text chunks
+    chunk_title_map = []     # parallel list: which title each chunk belongs to
+    all_questions = []       # (title, question, expected_answer)
+
+    for title in selected_titles:
+        context = CONTEXTS[title]
+        chunks = split_into_chunks(context, sentences_per_chunk=3, overlap_sentences=1)
+        if not chunks:
+            chunks = [p.strip() for p in context.split('\n\n') if p.strip()]
+        if not chunks:
+            chunks = [context]
+
+        all_chunks.extend(chunks)
+        chunk_title_map.extend([title] * len(chunks))
+
+        questions = TEST_QUESTIONS.get(title, [])
+        if questions:
+            if len(questions) > args.max_questions:
+                questions = questions[:args.max_questions]
+            for q, a in questions:
+                all_questions.append((title, q, a))
+
+    print(f"   Total chunks: {len(all_chunks)}")
+    print(f"   Total questions: {len(all_questions)}")
+
+    # ---- Embed all chunks ----
+    print("\n🔢 Embedding all chunks...")
+    all_embeddings = embedder.embed_batch(all_chunks)
+
+    # ---- Shared Titan memory: digest ALL chunks ----
+    titan_rag = create_titan_rag(dim=256, device=DEVICE)
+    digest_epochs = min(args.epochs, 500)
+    print(f"\n🧠 Digesting {len(all_chunks)} chunks into shared memory ({digest_epochs} epochs)...")
+    for epoch in range(digest_epochs):
+        emb = embedder.embed_batch(all_chunks)
+        titan_rag.digest_knowledge(emb.unsqueeze(0))
+        if (epoch + 1) % 10 == 0:
+            print(f"   Epoch {epoch + 1}/{digest_epochs}")
+
+    # ---- Create retrievers (shared memory) ----
+    retrievers = create_retrievers(embedder, llm, titan_rag)
+
+    # ---- Evaluate ----
+    print("\n" + "=" * 60)
+    print("EVALUATING (cross-document retrieval)")
+    print("=" * 60)
+
+    # Prepare questions in evaluate_retriever format: list of (question, expected)
+    eval_questions = [(q, a) for (_, q, a) in all_questions]
+
+    # Per-title tracking
+    title_results = {name: {} for name in retrievers}  # {retriever: {title: [correct_bools]}}
+    for name in retrievers:
+        for title in selected_titles:
+            title_results[name][title] = []
+
+    results_summary = {}
+    for name, retriever in retrievers.items():
+        print(f"\n📊 Evaluating: {name.upper()}")
+        print("-" * 40)
+        accuracy, results = evaluate_retriever(
+            retriever, all_chunks, all_embeddings, eval_questions,
+            verbose=args.verbose, show_progress=not args.verbose
+        )
+        results_summary[name] = accuracy
+
+        # Map results back to titles for per-title stats
+        for idx, (title, q, a) in enumerate(all_questions):
+            title_results[name][title].append(results[idx]["correct"])
+
+        print(f"   Overall Accuracy: {accuracy:.1f}%")
+
+    # ---- Summary ----
+    print("\n" + "=" * 60)
+    print("OVERALL SUMMARY")
+    print("=" * 60)
+    for name, accuracy in results_summary.items():
+        bar = "█" * int(accuracy / 10) + "░" * (10 - int(accuracy / 10))
+        print(f"  {name:12s}: {bar} {accuracy:.1f}%")
+
+    # Per-title breakdown
+    print("\n" + "-" * 60)
+    print("PER-TITLE BREAKDOWN")
+    print("-" * 60)
+    header = f"  {'Title':<30s}"
+    for name in retrievers:
+        header += f" {name:>12s}"
+    print(header)
+    print("  " + "-" * (30 + 13 * len(retrievers)))
+
+    for title in selected_titles:
+        row = f"  {title[:30]:<30s}"
+        for name in retrievers:
+            bools = title_results[name][title]
+            if bools:
+                acc = sum(bools) / len(bools) * 100
+                row += f" {acc:>10.1f}% "
+            else:
+                row += f" {'N/A':>11s} "
+        print(row)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare baseline retrieval strategies")
-    
+
     # Mode selection
-    parser.add_argument("--squad", action="store_true", 
+    parser.add_argument("--squad", action="store_true",
                        help="Use SQuAD dataset instead of sample essays")
-    
+    parser.add_argument("--multi-doc", action="store_true",
+                       help="Multi-document mode: digest multiple articles into shared memory")
+
     # Sample essay mode options
     parser.add_argument("--essay", type=str, default="climate",
                        help="Essay to use (climate/ai/space)")
-    
+
     # SQuAD mode options
     parser.add_argument("--titles", type=int, default=10,
                        help="Number of titles to evaluate (SQuAD mode)")
     parser.add_argument("--max-questions", type=int, default=5,
-                       help="Max questions per title (SQuAD mode)")
-    
+                       help="Max questions per title (SQuAD/multi-doc mode)")
+
+    # Multi-doc mode options
+    parser.add_argument("--group-size", type=int, default=5,
+                       help="Number of titles to group together (multi-doc mode)")
+
     # Common options
     parser.add_argument("--epochs", type=int, default=50, help="Digestion epochs")
     parser.add_argument("--topk", type=int, default=5, help="Top-K for retrieval")
     parser.add_argument("--verbose", action="store_true", help="Show detailed output")
-    
+
     args = parser.parse_args()
-    
-    if args.squad:
+
+    if args.multi_doc:
+        run_multidoc_mode(args)
+    elif args.squad:
         run_squad_mode(args)
     else:
         run_sample_essay_mode(args)

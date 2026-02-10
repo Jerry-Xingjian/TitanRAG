@@ -26,5 +26,7 @@ Thumbs.db
 # Project specific (if any temp outputs)
 *.tmp
 
+# SQuAD dataset
 data/processed_squad.py
 data/train.csv
+data/train-v2.0.json
