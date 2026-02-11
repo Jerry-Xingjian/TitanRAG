@@ -80,7 +80,8 @@ def generate_notebook():
             "\n",
             "### Modes:\n",
             "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
-            "2. **SQuAD Mode**: Use processed SQuAD dataset (requires setup)"
+            "2. **SQuAD Mode**: Use processed SQuAD dataset (single-doc per title)\n",
+            "3. **Multi-Doc Mode**: Digest multiple articles into shared memory for cross-document retrieval"
         ]
     })
     
@@ -261,12 +262,50 @@ def generate_notebook():
         "source": squad_cell_source
     })
     
-    # ===== Cell 6: Custom Comparison (Optional) =====
+    # ===== Cell 6: Multi-Document Comparison =====
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "## 5. Custom Comparison (Optional)\n",
+            "## 5. Run Multi-Document Comparison\n",
+            "\n",
+            "This mode digests multiple SQuAD articles into a **shared** Titan memory, ",
+            "enabling cross-document retrieval.\n",
+            "\n",
+            "**Parameters:**\n",
+            "- `--multi-doc`: Enable multi-document mode\n",
+            "- `--group-size N`: Number of titles to group together (default: 5)\n",
+            "- `--max-questions N`: Max questions per title (default: 5)\n",
+            "- `--epochs N`: Digestion epochs (default: 50)"
+        ]
+    })
+
+    multidoc_cell_source = [
+        "# Run multi-document cross-article comparison\n",
+        "# Articles are digested into a shared memory, retrieval spans all chunks\n",
+        "\n"
+    ]
+
+    if squad_exists:
+        multidoc_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 3 --epochs 20\n")
+    else:
+        multidoc_cell_source.append("# Note: SQuAD data not set up. Run cell 2.5 first.\n")
+        multidoc_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 3 --epochs 20\n")
+
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": multidoc_cell_source
+    })
+
+    # ===== Cell 7: Custom Comparison (Optional) =====
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 6. Custom Comparison (Optional)\n",
             "\n",
             "Run the comparison with your own parameters."
         ]
@@ -280,8 +319,11 @@ def generate_notebook():
             "# Custom parameters for sample essays\n",
             "# !python projects/hybrid_titans/compare_baselines.py --essay ai --epochs 100 --topk 5\n",
             "\n",
-            "# Custom parameters for SQuAD\n",
-            "# !python projects/hybrid_titans/compare_baselines.py --squad --titles 20 --max-questions 10 --epochs 50 --verbose"
+            "# Custom parameters for SQuAD (single-doc)\n",
+            "# !python projects/hybrid_titans/compare_baselines.py --squad --titles 20 --max-questions 10 --epochs 50 --verbose\n",
+            "\n",
+            "# Custom parameters for multi-doc\n",
+            "# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 10 --max-questions 5 --epochs 50 --verbose"
         ]
     })
     
