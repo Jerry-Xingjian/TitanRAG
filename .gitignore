@@ -21,7 +21,6 @@ env/
 Thumbs.db
 
 # Logs
-*.log
 
 # Project specific (if any temp outputs)
 *.tmp
