@@ -185,8 +185,8 @@ def generate_output_file(contexts: dict, questions: dict, output_path: str):
         for title, context in contexts.items():
             # Create valid Python variable name
             var_name = create_variable_name(title)
-            # Escape triple quotes in content
-            escaped_context = context.replace('"""', '\\"\\"\\"')
+            # Escape backslashes first, then triple quotes in content
+            escaped_context = context.replace('\\', '\\\\').replace('"""', '\\"\\"\\"')
             f.write(f'{var_name} = """\n{escaped_context}\n"""\n\n')
         
         # Generate questions dictionary
@@ -198,14 +198,14 @@ def generate_output_file(contexts: dict, questions: dict, output_path: str):
         for title, qa_pairs in questions.items():
             if not qa_pairs:
                 continue
-            # Escape quotes in title
-            escaped_title = title.replace('"', '\\"')
+            # Escape quotes in title (backslashes first, then quotes)
+            escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
             f.write(f'    "{escaped_title}": [\n')
             
             for question, answer in qa_pairs:
-                # Escape quotes in question and answer
-                escaped_q = question.replace('"', '\\"').replace('\n', ' ')
-                escaped_a = answer.replace('"', '\\"').replace('\n', ' ')
+                # Escape backslashes first, then quotes and newlines
+                escaped_q = question.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+                escaped_a = answer.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
                 f.write(f'        ("{escaped_q}", "{escaped_a}"),\n')
             
             f.write('    ],\n')
@@ -222,7 +222,7 @@ def generate_output_file(contexts: dict, questions: dict, output_path: str):
         f.write('    return {\n')
         for title in contexts.keys():
             var_name = create_variable_name(title)
-            escaped_title = title.replace('"', '\\"')
+            escaped_title = title.replace('\\', '\\\\').replace('"', '\\"')
             f.write(f'        "{escaped_title}": {var_name},\n')
         f.write('    }\n\n')
         
