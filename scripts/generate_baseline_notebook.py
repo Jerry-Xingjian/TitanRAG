@@ -250,10 +250,10 @@ def generate_notebook():
     ]
     
     if squad_exists:
-        squad_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 3 --epochs 20\n")
+        squad_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
     else:
         squad_cell_source.append("# Note: SQuAD data not set up. Run cell 2.5 first to set up SQuAD.\n")
-        squad_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 3 --epochs 20\n")
+        squad_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
     
     cells.append({
         "cell_type": "code",
@@ -288,10 +288,10 @@ def generate_notebook():
     ]
 
     if squad_exists:
-        multidoc_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 3 --epochs 20\n")
+        multidoc_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
     else:
         multidoc_cell_source.append("# Note: SQuAD data not set up. Run cell 2.5 first.\n")
-        multidoc_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 3 --epochs 20\n")
+        multidoc_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
 
     cells.append({
         "cell_type": "code",
@@ -382,6 +382,7 @@ def generate_notebook():
             "- `--verbose`: Show detailed output"
         ]
     })
+    
 
     hotpotqa_cell_source = [
         "# Run baseline comparison on HotpotQA dataset (multi-hop QA)\n",
@@ -389,10 +390,10 @@ def generate_notebook():
     ]
 
     if hotpotqa_exists:
-        hotpotqa_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 5 --max-questions 3 --epochs 20\n")
+        hotpotqa_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
     else:
         hotpotqa_cell_source.append("# Note: HotpotQA data not set up. Run cell 5.5 first to set up HotpotQA.\n")
-        hotpotqa_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 5 --max-questions 3 --epochs 20\n")
+        hotpotqa_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
 
     cells.append({
         "cell_type": "code",
@@ -419,7 +420,7 @@ def generate_notebook():
         "outputs": [],
         "source": [
             "# Custom parameters for sample essays\n",
-            "# !python projects/hybrid_titans/compare_baselines.py --essay ai --epochs 100 --topk 5\n",
+            "# !python projects/hybrid_titans/compare_baselines.py --essay ai --epochs 100 --topk 3\n",
             "\n",
             "# Custom parameters for SQuAD (single-doc)\n",
             "# !python projects/hybrid_titans/compare_baselines.py --squad --titles 20 --max-questions 10 --epochs 50 --verbose\n",
@@ -428,10 +429,46 @@ def generate_notebook():
             "# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 10 --max-questions 5 --epochs 50 --verbose\n",
             "\n",
             "# Custom parameters for HotpotQA\n",
-            "# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 20 --max-questions 10 --epochs 50 --verbose"
+            "# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 20 --max-questions 10 --epochs 300 --verbose"
         ]
     })
     
+    # --- Cell: Download Evaluation Results ---
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 8. Download Evaluation Results\n",
+            "\n",
+            "Download saved JSON results from the `evaluations/` directory to your local machine."
+        ]
+    })
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "import os, glob, shutil\n",
+            "\n",
+            "eval_files = sorted(glob.glob('evaluations/*.json'))\n",
+            "if not eval_files:\n",
+            "    print('No evaluation results found in evaluations/')\n",
+            "else:\n",
+            "    print(f'Found {len(eval_files)} result file(s):')\n",
+            "    for f in eval_files:\n",
+            "        print(f'  - {f}')\n",
+            "    try:\n",
+            "        from google.colab import files\n",
+            "        shutil.make_archive('evaluation_results', 'zip', '.', 'evaluations')\n",
+            "        files.download('evaluation_results.zip')\n",
+            "        print('Downloading evaluation_results.zip ...')\n",
+            "    except ImportError:\n",
+            "        print('Not on Colab. Files at:', os.path.abspath('evaluations/'))"
+        ]
+    })
+
+
     # Notebook structure
     notebook = {
         "cells": cells,

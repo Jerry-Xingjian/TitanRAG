@@ -22,23 +22,58 @@ def normalize_scores(scores: torch.Tensor) -> torch.Tensor:
 
 def compute_bm25_scores(question: str, documents: List[str]) -> torch.Tensor:
     """
-    Compute simple BM25-like keyword matching scores.
+    Compute BM25 scores with TF-IDF weighting.
     
-    Args:
-        question: Query text
-        documents: List of document strings
-    
-    Returns:
-        torch.Tensor: Keyword match scores for each document
+    Uses proper BM25 formula with:
+    - Term frequency with saturation (k1=1.5)
+    - Inverse document frequency 
+    - Document length normalization (b=0.75)
     """
-    question_lower = question.lower()
-    question_words = [w for w in question_lower.split() if len(w) > 3]
+    import re
+    import math
+    
+    STOPWORDS = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'in', 'on', 'at',
+                 'to', 'for', 'of', 'with', 'by', 'and', 'or', 'not', 'that',
+                 'this', 'it', 'from', 'as', 'be', 'has', 'had', 'have', 'do',
+                 'does', 'did', 'but', 'if', 'so', 'what', 'which', 'who',
+                 'how', 'when', 'where', 'why', 'can', 'will', 'would', 'could'}
+    
+    def tokenize(text):
+        words = re.findall(r'\b\w+\b', text.lower())
+        return [w for w in words if len(w) > 1 and w not in STOPWORDS]
+    
+    query_terms = tokenize(question)
+    if not query_terms:
+        return torch.zeros(len(documents))
+    
+    # Tokenize all documents
+    doc_tokens = [tokenize(doc) for doc in documents]
+    avg_dl = sum(len(dt) for dt in doc_tokens) / max(len(doc_tokens), 1)
+    
+    # BM25 parameters
+    k1, b = 1.5, 0.75
+    N = len(documents)
     
     scores = []
-    for doc in documents:
-        doc_lower = doc.lower()
-        score = sum(1 for word in question_words if word in doc_lower)
-        scores.append(float(score))
+    for doc_toks in doc_tokens:
+        dl = len(doc_toks)
+        score = 0.0
+        tf_map = {}
+        for t in doc_toks:
+            tf_map[t] = tf_map.get(t, 0) + 1
+        
+        for term in query_terms:
+            # Document frequency
+            df = sum(1 for dt in doc_tokens if term in dt)
+            if df == 0:
+                continue
+            idf = math.log((N - df + 0.5) / (df + 0.5) + 1.0)
+            
+            tf = tf_map.get(term, 0)
+            tf_norm = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * dl / max(avg_dl, 1)))
+            score += idf * tf_norm
+        
+        scores.append(score)
     
     return torch.tensor(scores)
 
@@ -46,9 +81,10 @@ def compute_bm25_scores(question: str, documents: List[str]) -> torch.Tensor:
 class BaseRetriever:
     """Base class for retrieval strategies."""
     
-    def __init__(self, embedder, llm_generator):
+    def __init__(self, embedder, llm_generator, multihop=False):
         self.embedder = embedder
         self.llm = llm_generator
+        self.multihop = multihop
     
     def retrieve(self, question: str, documents: List[str], 
                  doc_embeddings: torch.Tensor, topk: int = 5) -> Tuple[str, Dict]:
@@ -76,7 +112,8 @@ class BaseRetriever:
             dict: {"answer": str, "context": str, "retrieval_details": dict}
         """
         context, details = self.retrieve(question, documents, doc_embeddings, topk)
-        answer, prompt = self.llm.generate_qa(question, context, max_new_tokens)
+        answer, prompt = self.llm.generate_qa(question, context, max_new_tokens,
+                                                multihop=self.multihop)
         
         return {
             "answer": answer,
@@ -95,8 +132,9 @@ class PureRAG(BaseRetriever):
     """
     
     def __init__(self, embedder, llm_generator, 
-                 bm25_weight: float = 0.4, embed_weight: float = 0.6):
-        super().__init__(embedder, llm_generator)
+                 bm25_weight: float = 0.4, embed_weight: float = 0.6,
+                 multihop: bool = False):
+        super().__init__(embedder, llm_generator, multihop=multihop)
         self.bm25_weight = bm25_weight
         self.embed_weight = embed_weight
     
@@ -131,7 +169,7 @@ class PureRAG(BaseRetriever):
         
         # Build context
         context_lines = [documents[idx] for idx in topk_indices.tolist()]
-        context = " ".join(context_lines)
+        context = "\n\n".join(context_lines)
         
         return context, {
             "mode": "PureRAG",
@@ -150,8 +188,8 @@ class TitanOnly(BaseRetriever):
     No BM25, no direct embedding similarity.
     """
     
-    def __init__(self, embedder, llm_generator, titan_rag):
-        super().__init__(embedder, llm_generator)
+    def __init__(self, embedder, llm_generator, titan_rag, multihop=False):
+        super().__init__(embedder, llm_generator, multihop=multihop)
         self.titan_rag = titan_rag
     
     def retrieve(self, question: str, documents: List[str],
@@ -179,7 +217,7 @@ class TitanOnly(BaseRetriever):
         
         # Build context
         context_lines = [documents[idx] for idx in topk_indices.tolist()]
-        context = " ".join(context_lines)
+        context = "\n\n".join(context_lines)
         
         return context, {
             "mode": "TitanOnly",
@@ -211,8 +249,9 @@ class HybridRAG(BaseRetriever):
     def __init__(self, embedder, llm_generator, titan_rag,
                  base_bm25_weight: float = 0.3,
                  base_memory_weight: float = 0.3,
-                 base_embed_weight: float = 0.4):
-        super().__init__(embedder, llm_generator)
+                 base_embed_weight: float = 0.4,
+                 multihop: bool = False):
+        super().__init__(embedder, llm_generator, multihop=multihop)
         self.titan_rag = titan_rag
         self.base_bm25_weight = base_bm25_weight
         self.base_memory_weight = base_memory_weight
@@ -294,7 +333,7 @@ class HybridRAG(BaseRetriever):
         
         # Build context
         context_lines = [documents[idx] for idx in topk_indices.tolist()]
-        context = " ".join(context_lines)
+        context = "\n\n".join(context_lines)
         
         return context, {
             "mode": "HybridRAG",
@@ -324,7 +363,7 @@ class HybridRAG(BaseRetriever):
         self.titan_rag.titan.ltm.forward_with_update(query_vec, answer_vec)
 
 
-def create_retrievers(embedder, llm_generator, titan_rag=None) -> Dict[str, BaseRetriever]:
+def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -> Dict[str, BaseRetriever]:
     """
     Factory function to create all retriever instances.
     
@@ -332,16 +371,17 @@ def create_retrievers(embedder, llm_generator, titan_rag=None) -> Dict[str, Base
         embedder: SentenceTransformerEmbedder instance
         llm_generator: FlanT5Generator instance
         titan_rag: TitanRAG instance (required for TitanOnly and HybridRAG)
+        multihop: If True, use multi-hop reasoning prompt (for HotpotQA)
     
     Returns:
         dict: {"pure_rag": PureRAG, "titan_only": TitanOnly, "hybrid": HybridRAG}
     """
     retrievers = {
-        "pure_rag": PureRAG(embedder, llm_generator)
+        "pure_rag": PureRAG(embedder, llm_generator, multihop=multihop)
     }
     
     if titan_rag is not None:
-        retrievers["titan_only"] = TitanOnly(embedder, llm_generator, titan_rag)
-        retrievers["hybrid"] = HybridRAG(embedder, llm_generator, titan_rag)
+        retrievers["titan_only"] = TitanOnly(embedder, llm_generator, titan_rag, multihop=multihop)
+        retrievers["hybrid"] = HybridRAG(embedder, llm_generator, titan_rag, multihop=multihop)
     
     return retrievers
