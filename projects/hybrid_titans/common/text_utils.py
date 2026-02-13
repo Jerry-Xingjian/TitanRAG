@@ -121,3 +121,36 @@ def _create_chunks_from_sentences(chunks, header, sentences,
 def simple_split(text):
     """Simple line-by-line split (for comparison)."""
     return [line.strip() for line in text.split('\n') if line.strip() and len(line.strip()) > 10]
+
+
+def chunk_context(context):
+    """Split a context string into chunks, respecting document boundaries.
+
+    For multi-document contexts (HotpotQA style with '# Title' headers),
+    chunks are created within each document to avoid mixing content
+    from different source documents in the same chunk.
+    """
+    doc_sections = re.split(r'\n(?=# )', context)
+
+    if len(doc_sections) > 1:
+        # Multi-document: chunk each section independently
+        all_chunks = []
+        for section in doc_sections:
+            section = section.strip()
+            if not section:
+                continue
+            section_chunks = split_into_chunks(section, sentences_per_chunk=3, overlap_sentences=1)
+            if section_chunks:
+                all_chunks.extend(section_chunks)
+            elif len(section) >= 30:
+                all_chunks.append(section)
+        if all_chunks:
+            return all_chunks
+
+    # Single-document or fallback
+    chunks = split_into_chunks(context, sentences_per_chunk=2, overlap_sentences=1)
+    if not chunks:
+        chunks = [p.strip() for p in context.split('\n\n') if p.strip()]
+    if not chunks:
+        chunks = [context]
+    return chunks

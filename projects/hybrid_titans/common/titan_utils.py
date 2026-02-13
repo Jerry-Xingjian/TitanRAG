@@ -90,38 +90,34 @@ def create_titan_rag(dim=256, arch="MAG", window_size=32, memory_depth=3,
     return titan_rag
 
 
-def digest_document(titan_rag, embedder, text, epochs=50):
-    """
-    Digest a document into TitanRAG memory.
-    
+def digest_chunks(embedder, titan_rag, chunks, epochs, inline=False):
+    """Digest chunks into Titan memory.
+
     Args:
+        embedder: SentenceTransformerEmbedder instance
         titan_rag: TitanRAG instance
-        embedder: Embedder to convert text to embeddings
-        text: Document text (will be split by paragraphs)
-        epochs: Number of digestion epochs
-    
-    Returns:
-        tuple: (paragraphs, paragraph_embeddings)
+        chunks: List of text chunks
+        epochs: Max digestion epochs (capped at 500)
+        inline: If True, print progress inline ("10 20 30 done").
+                If False, print epoch lines.
     """
-    # Parse into paragraphs
-    raw_paragraphs = text.split('\n\n')
-    paragraphs = []
-    for para in raw_paragraphs:
-        cleaned = ' '.join(line.strip() for line in para.split('\n') if line.strip())
-        if cleaned and len(cleaned) > 10:
-            paragraphs.append(cleaned)
-    
-    # Embed paragraphs
-    all_embeddings = torch.cat([embedder(p) for p in paragraphs], dim=1)
-    
-    # Digest into memory
-    print(f"🧠 Digesting {len(paragraphs)} paragraphs ({epochs} epochs)...")
-    for epoch in range(epochs):
-        titan_rag.digest_knowledge(all_embeddings)
+    digest_epochs = min(epochs, 500)
+    if inline:
+        print(f"   Digesting ({digest_epochs} epochs): ", end="", flush=True)
+    else:
+        print(f"\n🧠 Digesting {len(chunks)} chunks into shared memory ({digest_epochs} epochs)...")
+
+    # Pre-compute embeddings once (chunks don't change between epochs)
+    cached_emb = embedder.embed_batch(chunks).unsqueeze(0)
+
+    for epoch in range(digest_epochs):
+        titan_rag.digest_knowledge(cached_emb)
         if (epoch + 1) % 10 == 0:
-            print(f"   Epoch {epoch + 1}/{epochs} completed")
-    
-    # Compute paragraph embeddings for retrieval
-    paragraph_embeddings = embedder.embed_batch(paragraphs)
-    
-    return paragraphs, paragraph_embeddings
+            if inline:
+                print(f"{epoch+1}", end=" ", flush=True)
+            else:
+                print(f"   Epoch {epoch + 1}/{digest_epochs}")
+
+    if inline:
+        print("done")
+

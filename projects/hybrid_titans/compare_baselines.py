@@ -24,12 +24,8 @@ Usage:
 import argparse
 import sys
 import os
-import re
 import random
 import io
-import json
-import math
-from datetime import datetime
 
 # Fix Windows console encoding
 if sys.platform == 'win32':
@@ -41,9 +37,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src'))
 
 from common.embedders import SentenceTransformerEmbedder
-from common.titan_utils import create_titan_rag
+from common.titan_utils import create_titan_rag, digest_chunks as _digest_chunks
 from common.llm_utils import FlanT5Generator
-from common.text_utils import split_into_chunks
+from common.text_utils import chunk_context as _chunk_context
+from common.eval_utils import evaluate_retriever
+from common.output_utils import print_summary_bar as _print_summary_bar, save_results as _save_results
 from baselines import create_retrievers
 
 
@@ -77,170 +75,6 @@ def load_hotpotqa_data():
         sys.exit(1)
 
 
-def extract_key_elements(text):
-    """Extract key numbers and keywords from text for matching."""
-    text = text.lower()
-    numbers = re.findall(r'[\d.]+%?', text)
-    years = re.findall(r'\b(19|20)\d{2}\b', text)
-    return set(numbers + years)
-
-
-def extract_keywords(text):
-    """Extract meaningful keywords from text, removing stopwords."""
-    stopwords = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-                 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-                 'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare',
-                 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
-                 'into', 'through', 'during', 'before', 'after', 'above', 'below',
-                 'between', 'under', 'again', 'further', 'then', 'once', 'and', 'or',
-                 'but', 'if', 'because', 'until', 'while', 'that', 'which', 'who',
-                 'whom', 'this', 'these', 'those', 'it', 'its', 'their', 'they'}
-    
-    text = re.sub(r'[^\w\s]', ' ', text.lower())
-    words = text.split()
-    keywords = [w for w in words if w not in stopwords and len(w) > 2]
-    return set(keywords)
-
-
-def evaluate_answer_quality(expected, got, embedder=None):
-    """Flexible answer evaluation using multiple criteria.
-    
-    Args:
-        expected: Expected answer string
-        got: Model-generated answer string
-        embedder: Optional SentenceTransformerEmbedder for semantic similarity fallback
-    """
-    expected_lower = expected.lower().strip()
-    got_lower = got.lower().strip()
-    
-    # 0. Yes/No shortcut (important for HotpotQA comparison questions)
-    if expected_lower in ('yes', 'no'):
-        got_first = got_lower.split()[0] if got_lower else ''
-        if got_first.rstrip('.,!') == expected_lower:
-            return True
-        if expected_lower in got_lower and expected_lower != 'no':
-            return True
-        if expected_lower == 'no' and ('no,' in got_lower or 'no.' in got_lower or got_lower == 'no'):
-            return True
-        return False
-    
-    # 0.5 Normalize articles and common prefixes
-    def strip_articles(s):
-        for prefix in ('the ', 'a ', 'an '):
-            if s.startswith(prefix):
-                s = s[len(prefix):]
-        return s.strip()
-    
-    exp_norm = strip_articles(expected_lower)
-    got_norm = strip_articles(got_lower)
-    
-    # 1. Bidirectional containment (with and without articles)
-    if expected_lower in got_lower or got_lower in expected_lower:
-        return True
-    if exp_norm in got_norm or got_norm in exp_norm:
-        return True
-    
-    # 2. Phrase overlap
-    got_words = got_lower.split()
-    if len(got_words) >= 3:
-        for i in range(len(got_words) - 2):
-            phrase = ' '.join(got_words[i:i+3])
-            if phrase in expected_lower:
-                return True
-    
-    # 3. Key elements matching
-    expected_keys = extract_key_elements(expected)
-    got_keys = extract_key_elements(got)
-    if expected_keys and expected_keys & got_keys:
-        return True
-    
-    # 4. Keyword overlap (adaptive threshold based on answer length)
-    expected_keywords = extract_keywords(expected)
-    got_keywords = extract_keywords(got)
-    if expected_keywords:
-        overlap = len(expected_keywords & got_keywords)
-        threshold = 0.3 if len(expected_keywords) <= 3 else 0.4
-        if overlap / len(expected_keywords) >= threshold:
-            return True
-    
-    # 5. Semantic similarity fallback (embedding-based)
-    if embedder is not None:
-        try:
-            import torch.nn.functional as F
-            exp_emb = embedder(expected).reshape(-1, embedder.target_dim).mean(dim=0)
-            got_emb = embedder(got).reshape(-1, embedder.target_dim).mean(dim=0)
-            sim = F.cosine_similarity(exp_emb.unsqueeze(0), got_emb.unsqueeze(0)).item()
-            if sim >= 0.75:
-                return True
-        except Exception:
-            pass
-    
-    return False
-
-
-def _compute_topk(num_chunks):
-    """Dynamically compute topk based on chunk pool size.
-    
-    - ≤10 chunks: topk=3 (small docs, most chunks relevant)
-    - 10-50 chunks: topk=3-5 (moderate, need selectivity)
-    - 50-500 chunks: topk=5-6 (large pool, need more coverage)
-    - 500+ chunks: topk=7 (very large, max coverage)
-    """
-    if num_chunks <= 10:
-        return 3
-    topk = 3 + int(math.log2(num_chunks / 10))
-    return max(3, min(topk, 7))
-
-
-def evaluate_retriever(retriever, documents, doc_embeddings, questions,
-                       verbose=True, show_progress=False, embedder=None,
-                       topk=None):
-    """Evaluate a retriever on a set of questions."""
-    correct = 0
-    total = len(questions)
-    
-    # Dynamic topk if not specified
-    if topk is None or topk <= 0:
-        topk = _compute_topk(len(documents))
-    
-    results = []
-    progress_chars = []
-    
-    for i, (question, expected) in enumerate(questions):
-        result = retriever.answer(question, documents, doc_embeddings, topk=topk)
-        is_correct = evaluate_answer_quality(expected, result["answer"], embedder=embedder)
-        if is_correct:
-            correct += 1
-        
-        results.append({
-            "question": question,
-            "expected": expected,
-            "answer": result["answer"],
-            "correct": is_correct,
-            "mode": result["mode"]
-        })
-        
-        # Show progress indicator
-        if show_progress:
-            status_char = "." if is_correct else "x"
-            progress_chars.append(status_char)
-            # Print progress every 5 questions or at the end
-            if (i + 1) % 10 == 0 or i == total - 1:
-                print(f"      [{i+1}/{total}] {''.join(progress_chars[-10:])}", end="\r")
-        
-        if verbose:
-            status = "ok" if is_correct else "X"
-            print(f"      [{i+1}/{total}] {status} Q: {question[:50]}")
-            print(f"           Exp: {expected[:40]}")
-            print(f"           Got: {result['answer'][:40]}")
-    
-    if show_progress:
-        print()  # New line after progress
-    
-    accuracy = correct / total * 100 if total > 0 else 0
-    return accuracy, results
-
-
 def run_sample_essay_mode(args):
     """Run comparison on sample essays (original mode)."""
     ESSAYS, TEST_QUESTIONS = load_sample_essays()
@@ -272,6 +106,7 @@ def run_sample_essay_mode(args):
         print(f"\n📊 Evaluating: {name.upper()}")
         print("-" * 40)
         accuracy, results = evaluate_retriever(retriever, chunks, chunk_embeddings, questions,
+                                               verbose=args.verbose, show_progress=not args.verbose,
                                                embedder=embedder, topk=args.topk)
         results_summary[name] = accuracy
         all_details[name] = results
@@ -285,7 +120,7 @@ def run_sample_essay_mode(args):
 
     if getattr(args, 'save_results', False):
         _save_results(f"essay_{args.essay}",
-                      {"essay": args.essay, "epochs": args.epochs},
+                      {"essay": args.essay, "epochs": args.epochs, "topk": args.topk},
                       results_summary,
                       details=all_details)
 
@@ -298,134 +133,6 @@ def _init_components():
     llm = FlanT5Generator("google/flan-t5-xl", device=DEVICE)
     return embedder, llm, DEVICE
 
-
-def _chunk_context(context):
-    """Split a context string into chunks, respecting document boundaries.
-    
-    For multi-document contexts (HotpotQA style with '# Title' headers),
-    chunks are created within each document to avoid mixing content
-    from different source documents in the same chunk.
-    """
-    # Check if context has multiple document sections (e.g. HotpotQA)
-    import re
-    doc_sections = re.split(r'\n(?=# )', context)
-    
-    if len(doc_sections) > 1:
-        # Multi-document: chunk each section independently
-        all_chunks = []
-        for section in doc_sections:
-            section = section.strip()
-            if not section:
-                continue
-            section_chunks = split_into_chunks(section, sentences_per_chunk=3, overlap_sentences=1)
-            if section_chunks:
-                all_chunks.extend(section_chunks)
-            elif len(section) >= 30:
-                all_chunks.append(section)
-        if all_chunks:
-            return all_chunks
-    
-    # Single-document or fallback
-    chunks = split_into_chunks(context, sentences_per_chunk=2, overlap_sentences=1)
-    if not chunks:
-        chunks = [p.strip() for p in context.split('\n\n') if p.strip()]
-    if not chunks:
-        chunks = [context]
-    return chunks
-
-
-def _digest_chunks(embedder, titan_rag, chunks, epochs, inline=False):
-    """Digest chunks into Titan memory.
-    
-    Args:
-        inline: If True, print progress inline ("10 20 30 done").
-                If False, print epoch lines.
-    """
-    digest_epochs = min(epochs, 500)
-    if inline:
-        print(f"   Digesting ({digest_epochs} epochs): ", end="", flush=True)
-    else:
-        print(f"\n🧠 Digesting {len(chunks)} chunks into shared memory ({digest_epochs} epochs)...")
-
-    # Pre-compute embeddings once (chunks don't change between epochs)
-    cached_emb = embedder.embed_batch(chunks).unsqueeze(0)
-
-    for epoch in range(digest_epochs):
-        titan_rag.digest_knowledge(cached_emb)
-        if (epoch + 1) % 10 == 0:
-            if inline:
-                print(f"{epoch+1}", end=" ", flush=True)
-            else:
-                print(f"   Epoch {epoch + 1}/{digest_epochs}")
-
-    if inline:
-        print("done")
-
-
-def _print_summary_bar(results_dict, show_counts=True):
-    """Print a bar-chart summary of retriever results."""
-    for name, stats in results_dict.items():
-        if isinstance(stats, dict) and stats.get("total", 0) > 0:
-            accuracy = stats["correct"] / stats["total"] * 100
-            bar = "█" * int(accuracy / 10) + "░" * (10 - int(accuracy / 10))
-            if show_counts:
-                print(f"  {name:12s}: {bar} {accuracy:.1f}% ({stats['correct']}/{stats['total']})")
-            else:
-                print(f"  {name:12s}: {bar} {accuracy:.1f}%")
-        elif isinstance(stats, (int, float)):
-            accuracy = stats
-            bar = "█" * int(accuracy / 10) + "░" * (10 - int(accuracy / 10))
-            print(f"  {name:12s}: {bar} {accuracy:.1f}%")
-
-
-def _save_results(dataset_name, config, summary, details=None):
-    """Save evaluation results to evaluations/ directory as JSON.
-
-    Args:
-        dataset_name: e.g. 'hotpotqa', 'squad', 'multidoc', 'essay_climate'
-        config: dict of run configuration (epochs, topk, titles, etc.)
-        summary: dict of {retriever_name: accuracy_or_stats}
-        details: optional list of per-question result dicts
-    """
-    eval_dir = os.path.join(os.path.dirname(os.path.dirname(
-        os.path.dirname(os.path.abspath(__file__)))), 'evaluations')
-    os.makedirs(eval_dir, exist_ok=True)
-
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"{dataset_name}_{timestamp}.json"
-
-    # Show relative path for portability
-    try:
-        rel_path = os.path.relpath(os.path.join(eval_dir, filename))
-    except ValueError:
-        rel_path = os.path.join(eval_dir, filename)
-
-    # Normalize summary to {name: {accuracy, correct, total}}
-    norm_summary = {}
-    for name, stats in summary.items():
-        if isinstance(stats, dict) and "total" in stats:
-            total = stats["total"]
-            correct = stats["correct"]
-            norm_summary[name] = {
-                "accuracy": round(correct / total * 100, 1) if total > 0 else 0,
-                "correct": correct, "total": total
-            }
-        elif isinstance(stats, (int, float)):
-            norm_summary[name] = {"accuracy": round(stats, 1)}
-
-    data = {
-        "dataset": dataset_name,
-        "timestamp": datetime.now().isoformat(),
-        "config": config,
-        "summary": norm_summary,
-    }
-    if details:
-        data["details"] = details
-
-    filepath = os.path.join(eval_dir, filename)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    print(f"\n💾 Results saved to: {rel_path}")
 
 
 def run_dataset_mode(args, contexts, questions, dataset_name):
