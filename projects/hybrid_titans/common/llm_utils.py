@@ -9,7 +9,7 @@ import torch
 class FlanT5Generator:
     """Flan-T5 based text generator."""
     
-    def __init__(self, model_name="google/flan-t5-large", device=None):
+    def __init__(self, model_name="google/flan-t5-xl", device=None):
         from transformers import T5ForConditionalGeneration, T5Tokenizer
         
         self.device = device
@@ -40,7 +40,7 @@ class FlanT5Generator:
             prompt,
             return_tensors="pt",
             truncation=True,
-            max_length=768
+            max_length=1024
         )
         
         # Move inputs to the same device as the model
@@ -64,7 +64,7 @@ class FlanT5Generator:
         answer = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
         return answer
     
-    def generate_qa(self, question, context, max_new_tokens=100):
+    def generate_qa(self, question, context, max_new_tokens=100, multihop=False):
         """
         Generate answer for a question given context.
         
@@ -72,11 +72,25 @@ class FlanT5Generator:
             question: The question
             context: Context/passage to answer from
             max_new_tokens: Maximum tokens to generate
+            multihop: If True, use multi-hop reasoning prompt (for HotpotQA).
+                      If False, use extractive prompt (for SQuAD).
         
         Returns:
             tuple: (answer, prompt)
         """
-        prompt = f"""Answer the question based on the context provided.
+        if multihop:
+            prompt = f"""Answer the question based on the context provided.
+Extract specific details: exact numbers, names, dates, and technical terms.
+Provide a concise, direct answer.
+
+Context:
+{context}
+
+Question: {question}
+
+Answer:"""
+        else:
+            prompt = f"""Answer the question based on the context provided.
 Extract specific details: exact numbers, names, dates, and technical terms.
 Provide the most relevant answer from the context, even if partial.
 
