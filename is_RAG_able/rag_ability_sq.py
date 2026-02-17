@@ -54,15 +54,19 @@ def main():
     embedder = SentenceTransformerEmbedder(args.embedder, target_dim=args.target_dim)
     rag = PureRAG(embedder, llm_generator=None)  # 不生成答案，只做检索
 
+    # 收集所有样本的 chunks，构建全局检索库
+    all_chunks = []
+    for sample in samples:
+        all_chunks.extend(sample["chunks"])
+    # 计算全体 chunks 的 embedding
+    all_chunk_embs = embedder.embed_batch(all_chunks)
+
     answer_label_data = []
     for sample in tqdm(samples, desc="RAG检索与标注"):
         question = sample["question"]
         gold = sample["gold"]
-        chunks = sample["chunks"]
-        # 计算chunks embedding
-        chunk_embs = embedder.embed_batch(chunks)
-        # PureRAG检索
-        context, details = rag.retrieve(question, chunks, chunk_embs, topk=1)
+        # PureRAG检索（在所有文章片段中检索）
+        context, details = rag.retrieve(question, all_chunks, all_chunk_embs, topk=1)
         # 更严格：只允许top1 chunk完全包含gold answer才算可检索
         top_chunk = context
         if gold.strip() == top_chunk.strip() or gold in top_chunk:
@@ -71,18 +75,11 @@ def main():
             label = "不可检索"
         answer_label_data.append({"text": top_chunk, "label": label, "question": question, "gold": gold})
 
-    # 欠采样可检索样本，使两类数量平衡
-    import random
-    can = [item for item in answer_label_data if item["label"] == "可检索"]
-    cannot = [item for item in answer_label_data if item["label"] == "不可检索"]
-    if len(can) > len(cannot):
-        random.seed(42)
-        can = random.sample(can, len(cannot))
-    balanced_data = can + cannot
-    random.shuffle(balanced_data)
-    with open(args.output_path, "w", encoding="utf-8") as f:
-        json.dump(balanced_data, f, ensure_ascii=False, indent=2)
-    print(f"已保存: {args.output_path} (平衡后样本数: {len(balanced_data)})")
+    # 直接保存全部结果为 answer_label_sq.json
+    output_path = "data/answer_label_sq.json"
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(answer_label_data, f, ensure_ascii=False, indent=2)
+    print(f"已保存: {output_path} (总样本数: {len(answer_label_data)})")
 
 if __name__ == "__main__":
     main()

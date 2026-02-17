@@ -15,7 +15,7 @@ def compute_bm25_scores(questions, texts):
     q_tfidf = vectorizer.transform(questions)
     scores = (q_tfidf * text_tfidf.T).toarray()
     return np.diag(scores), scores, q_tfidf, text_tfidf
-
+   
 def compute_cosine_sim(q_embs, s_embs):
     q_norm = q_embs / (np.linalg.norm(q_embs, axis=1, keepdims=True) + 1e-8)
     s_norm = s_embs / (np.linalg.norm(s_embs, axis=1, keepdims=True) + 1e-8)
@@ -57,7 +57,7 @@ def extract_question_type(qs):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="data/answer_label_dataset_balanced.json")
+    parser.add_argument("--data_path", type=str, default="data/answer_label_sq.json")
     parser.add_argument("--embedder", type=str, default="all-MiniLM-L6-v2")
     parser.add_argument("--test_size", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
@@ -77,16 +77,31 @@ def main():
     q_emb = embedder.encode(questions, convert_to_tensor=True)
     q_lens = np.array([len(q) for q in questions]).reshape(-1, 1)
     gold_lens = np.array([len(g) for g in golds]).reshape(-1, 1)
-    bm25_diag, bm25_matrix, q_tfidf, text_tfidf = compute_bm25_scores(questions, sentences)
-    bm25_diag = bm25_diag.reshape(-1, 1)
-    bm25_rank = np.argsort(-bm25_matrix, axis=1)[:, 0].reshape(-1, 1)
+    # 分批计算BM25和TF-IDF相关特征，避免内存溢出
+    batch_size = 2048
+    bm25_diag_list, bm25_rank_list, cos_sim_list, eu_dist_list, man_dist_list, jaccard_sim_list, tfidf_cos_list = [], [], [], [], [], [], []
     emb_np = emb.cpu().numpy() if hasattr(emb, 'cpu') else emb
     q_emb_np = q_emb.cpu().numpy() if hasattr(q_emb, 'cpu') else q_emb
-    cos_sim = compute_cosine_sim(q_emb_np, emb_np)
-    eu_dist = compute_euclidean(q_emb_np, emb_np)
-    man_dist = compute_manhattan(q_emb_np, emb_np)
-    jaccard_sim = compute_jaccard(questions, sentences)
-    tfidf_cos = compute_tfidf_cosine(q_tfidf, text_tfidf)
+    for i in range(0, len(questions), batch_size):
+        q_batch = questions[i:i+batch_size]
+        s_batch = sentences[i:i+batch_size]
+        # BM25/TF-IDF
+        bm25_diag, bm25_matrix, q_tfidf, text_tfidf = compute_bm25_scores(q_batch, s_batch)
+        bm25_diag_list.append(bm25_diag.reshape(-1, 1))
+        bm25_rank_list.append(np.argsort(-bm25_matrix, axis=1)[:, 0].reshape(-1, 1))
+        # 其他特征
+        cos_sim_list.append(compute_cosine_sim(q_emb_np[i:i+batch_size], emb_np[i:i+batch_size]))
+        eu_dist_list.append(compute_euclidean(q_emb_np[i:i+batch_size], emb_np[i:i+batch_size]))
+        man_dist_list.append(compute_manhattan(q_emb_np[i:i+batch_size], emb_np[i:i+batch_size]))
+        jaccard_sim_list.append(compute_jaccard(q_batch, s_batch))
+        tfidf_cos_list.append(compute_tfidf_cosine(q_tfidf, text_tfidf))
+    bm25_diag = np.vstack(bm25_diag_list)
+    bm25_rank = np.vstack(bm25_rank_list)
+    cos_sim = np.vstack(cos_sim_list)
+    eu_dist = np.vstack(eu_dist_list)
+    man_dist = np.vstack(man_dist_list)
+    jaccard_sim = np.vstack(jaccard_sim_list)
+    tfidf_cos = np.vstack(tfidf_cos_list)
     q_type_oh = extract_question_type(questions)
     num_feats = np.concatenate([
         q_lens, gold_lens, bm25_diag, bm25_rank, cos_sim, eu_dist, man_dist, jaccard_sim, tfidf_cos

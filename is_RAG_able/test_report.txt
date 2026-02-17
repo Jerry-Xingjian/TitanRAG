@@ -1,30 +1,21 @@
-Train Accuracy: 0.6853
+Train Accuracy: 0.8533
 Train Classification Report:
               precision    recall  f1-score   support
 
-  NotRetrievable       0.71      0.63      0.67      5278
-   Retrievable         0.67      0.74      0.70      5278
+        不可检索       0.86      0.71      0.78     25106
+         可检索       0.85      0.93      0.89     44350
 
-accuracy                           0.69     10556
-macro avg       0.69      0.69      0.68     10556
-weighted avg    0.69      0.69      0.68     10556
+    accuracy                           0.85     69456
+   macro avg       0.86      0.82      0.83     69456
+weighted avg       0.85      0.85      0.85     69456
 
-Test Accuracy: 0.6602
+Test Accuracy: 0.8265
 Test Classification Report:
               precision    recall  f1-score   support
 
-  NotRetrievable       0.68      0.60      0.64      1320
-   Retrievable         0.64      0.72      0.68      1320
+        不可检索       0.82      0.67      0.74      6277
+         可检索       0.83      0.92      0.87     11088
 
-accuracy                           0.66      2640
-macro avg       0.66      0.66      0.66      2640
-weighted avg    0.66      0.66      0.66      2640
-
-# Metric explanations:
-# precision: Of all samples predicted as this class, the proportion that are actually this class (true positive rate among predicted positives).
-# recall: Of all actual samples of this class, the proportion that are correctly predicted (true positive rate among actual positives).
-# f1-score: Harmonic mean of precision and recall, reflecting the balance between them.
-# support: The number of true samples of this class in the dataset.
-# accuracy: Overall proportion of correctly predicted samples.
-# macro avg: Unweighted mean of the metric across all classes.
-# weighted avg: Mean of the metric across all classes, weighted by the number of true samples for each class.
+    accuracy                           0.83     17365
+   macro avg       0.82      0.79      0.80     17365
+weighted avg       0.83      0.83      0.82     17365

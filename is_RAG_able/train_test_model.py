@@ -16,7 +16,7 @@ from sklearn.metrics import classification_report, accuracy_score
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_path", type=str, default="data/answer_label_dataset_balanced.json")
+    parser.add_argument("--data_path", type=str, default="data/answer_label_sq.json")
     parser.add_argument("--embedder", type=str, default="all-MiniLM-L6-v2")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=64)
@@ -76,16 +76,31 @@ def main():
     # 特征增强
     q_lens = np.array([len(q) for q in questions]).reshape(-1, 1)
     gold_lens = np.array([len(g) for g in golds]).reshape(-1, 1)
-    bm25_diag, bm25_matrix, q_tfidf, text_tfidf = compute_bm25_scores(questions, sentences)
-    bm25_diag = bm25_diag.reshape(-1, 1)
-    bm25_rank = np.argsort(-bm25_matrix, axis=1)[:, 0].reshape(-1, 1)
+    # 分批计算BM25和TF-IDF相关特征，避免内存溢出
+    batch_size = 2048
+    bm25_diag_list, bm25_rank_list, cos_sim_list, eu_dist_list, man_dist_list, jaccard_sim_list, tfidf_cos_list = [], [], [], [], [], [], []
     emb_np = emb.cpu().numpy() if hasattr(emb, 'cpu') else emb
     q_emb_np = q_emb.cpu().numpy() if hasattr(q_emb, 'cpu') else q_emb
-    cos_sim = compute_cosine_sim(q_emb_np, emb_np)
-    eu_dist = compute_euclidean(q_emb_np, emb_np)
-    man_dist = compute_manhattan(q_emb_np, emb_np)
-    jaccard_sim = compute_jaccard(questions, sentences)
-    tfidf_cos = compute_tfidf_cosine(q_tfidf, text_tfidf)
+    for i in range(0, len(questions), batch_size):
+        q_batch = questions[i:i+batch_size]
+        s_batch = sentences[i:i+batch_size]
+        # BM25/TF-IDF
+        bm25_diag, bm25_matrix, q_tfidf, text_tfidf = compute_bm25_scores(q_batch, s_batch)
+        bm25_diag_list.append(bm25_diag.reshape(-1, 1))
+        bm25_rank_list.append(np.argsort(-bm25_matrix, axis=1)[:, 0].reshape(-1, 1))
+        # 其他特征
+        cos_sim_list.append(compute_cosine_sim(q_emb_np[i:i+batch_size], emb_np[i:i+batch_size]))
+        eu_dist_list.append(compute_euclidean(q_emb_np[i:i+batch_size], emb_np[i:i+batch_size]))
+        man_dist_list.append(compute_manhattan(q_emb_np[i:i+batch_size], emb_np[i:i+batch_size]))
+        jaccard_sim_list.append(compute_jaccard(q_batch, s_batch))
+        tfidf_cos_list.append(compute_tfidf_cosine(q_tfidf, text_tfidf))
+    bm25_diag = np.vstack(bm25_diag_list)
+    bm25_rank = np.vstack(bm25_rank_list)
+    cos_sim = np.vstack(cos_sim_list)
+    eu_dist = np.vstack(eu_dist_list)
+    man_dist = np.vstack(man_dist_list)
+    jaccard_sim = np.vstack(jaccard_sim_list)
+    tfidf_cos = np.vstack(tfidf_cos_list)
     # 问题类型one-hot
     def extract_question_type(qs):
         types = []
