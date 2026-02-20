@@ -45,9 +45,9 @@ def get_b64_optional(path):
 
 def generate_notebook():
     """Generate the baseline comparison notebook."""
-    
+
     print("  - Reading source files...")
-    
+
     # Read all required files (small files only, skip large SQuAD data)
     main_b64 = get_b64_safe("src/main.py")
     embedders_b64 = get_b64_safe("projects/hybrid_titans/common/embedders.py")
@@ -58,14 +58,23 @@ def generate_notebook():
     compare_b64 = get_b64_safe("projects/hybrid_titans/compare_baselines.py")
     essays_b64 = get_b64_safe("data/sample_essays.py")
     init_b64 = base64.b64encode(b"# Common modules").decode("utf-8")
-    
-    # Check if processed_squad.py exists (but don't embed it - too large!)
+
+    # Check if processed dataset files exist
     squad_exists = os.path.exists("data/processed_squad.py") or os.path.exists("../data/processed_squad.py")
-    
+    hotpotqa_exists = os.path.exists("data/processed_hotpotqa.py") or os.path.exists("../data/processed_hotpotqa.py")
+    # 新增：检查 BeerQA 处理后的数据是否存在
+    beerqa_exists = os.path.exists("data/processed_beerqa.py") or os.path.exists("../data/processed_beerqa.py")
+
+    # 读取数据集处理脚本的base64编码
+    process_squad_b64 = get_b64_safe("data/process_squad_data.py")
+    process_hotpotqa_b64 = get_b64_optional("data/process_hotpotqa_data.py")
+    # 新增：读取 BeerQA 处理脚本的base64编码
+    process_beerqa_b64 = get_b64_safe("data/process_beerqa.py")
+
     print("  - Building notebook cells...")
-    
+
     cells = []
-    
+
     # ===== Cell 1: Title =====
     cells.append({
         "cell_type": "markdown",
@@ -75,17 +84,19 @@ def generate_notebook():
             "\n",
             "This notebook compares three retrieval strategies:\n",
             "- **PureRAG**: BM25 + Embedding (no Memory)\n",
-            "- **TitanOnly**: Memory-guided retrieval only\n", 
+            "- **TitanOnly**: Memory-guided retrieval only\n",
             "- **HybridRAG**: BM25 + Memory + Embedding fusion\n",
             "\n",
             "### Modes:\n",
             "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
             "2. **SQuAD Mode**: Use processed SQuAD dataset (single-doc per title)\n",
             "3. **Multi-Doc Mode**: Digest multiple articles into shared memory for cross-document retrieval\n",
-            "4. **HotpotQA Mode**: Multi-hop QA across multiple supporting documents (already multi-document)"
+            "4. **HotpotQA Mode**: Multi-hop QA across multiple supporting documents (already multi-document)\n",
+            # 新增：BeerQA 模式说明
+            "5. **BeerQA Mode**: Multi-hop QA on beer-related domain-specific dataset (multi-document)"
         ]
     })
-    
+
     # ===== Cell 2: Install Dependencies =====
     cells.append({
         "cell_type": "markdown",
@@ -102,14 +113,14 @@ def generate_notebook():
             "!pip install -q torch sentence-transformers transformers tqdm"
         ]
     })
-    
+
     # ===== Cell 3: Setup File System (small files only) =====
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
         "source": ["## 2. Setup File System (Core Files)"]
     })
-    
+
     setup_code = [
         "import os\n",
         "import base64\n",
@@ -144,7 +155,7 @@ def generate_notebook():
         "\n",
         "print('\\n✅ Core files ready!')\n"
     ]
-    
+
     cells.append({
         "cell_type": "code",
         "execution_count": None,
@@ -152,7 +163,7 @@ def generate_notebook():
         "outputs": [],
         "source": setup_code
     })
-    
+
     # ===== Cell 3.5: Setup SQuAD Data (auto-generate) =====
     cells.append({
         "cell_type": "markdown",
@@ -164,10 +175,7 @@ def generate_notebook():
             "**Skip this cell if you only want to use Sample Essays mode.**"
         ]
     })
-    
-    # Read process_squad_data.py and embed it
-    process_squad_b64 = get_b64_safe("data/process_squad_data.py")
-    
+
     squad_setup_code = [
         "import os\n",
         "import base64\n",
@@ -195,7 +203,7 @@ def generate_notebook():
         "    else:\n",
         "        print('❌ Failed to generate SQuAD dataset')\n"
     ]
-    
+
     cells.append({
         "cell_type": "code",
         "execution_count": None,
@@ -203,7 +211,7 @@ def generate_notebook():
         "outputs": [],
         "source": squad_setup_code
     })
-    
+
     # ===== Cell 4: Run Sample Essays Comparison =====
     cells.append({
         "cell_type": "markdown",
@@ -224,7 +232,7 @@ def generate_notebook():
             "!python projects/hybrid_titans/compare_baselines.py --essay climate --epochs 50"
         ]
     })
-    
+
     # ===== Cell 5: Run SQuAD Comparison =====
     cells.append({
         "cell_type": "markdown",
@@ -242,19 +250,21 @@ def generate_notebook():
             "- `--verbose`: Show detailed output"
         ]
     })
-    
+
     squad_cell_source = [
         "# Run baseline comparison on SQuAD dataset\n",
         "# Uncomment the line below to run\n",
         "\n"
     ]
-    
+
     if squad_exists:
-        squad_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
+        squad_cell_source.append(
+            "!python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
     else:
         squad_cell_source.append("# Note: SQuAD data not set up. Run cell 2.5 first to set up SQuAD.\n")
-        squad_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
-    
+        squad_cell_source.append(
+            "# !python projects/hybrid_titans/compare_baselines.py --squad --titles 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
+
     cells.append({
         "cell_type": "code",
         "execution_count": None,
@@ -262,7 +272,7 @@ def generate_notebook():
         "outputs": [],
         "source": squad_cell_source
     })
-    
+
     # ===== Cell 6: Multi-Document Comparison =====
     cells.append({
         "cell_type": "markdown",
@@ -288,10 +298,12 @@ def generate_notebook():
     ]
 
     if squad_exists:
-        multidoc_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
+        multidoc_cell_source.append(
+            "!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
     else:
         multidoc_cell_source.append("# Note: SQuAD data not set up. Run cell 2.5 first.\n")
-        multidoc_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
+        multidoc_cell_source.append(
+            "# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
 
     cells.append({
         "cell_type": "code",
@@ -314,9 +326,6 @@ def generate_notebook():
             "**Skip this cell if you only want to use Sample Essays or SQuAD mode.**"
         ]
     })
-
-    # Read process_hotpotqa_data.py and embed it
-    process_hotpotqa_b64 = get_b64_optional("data/process_hotpotqa_data.py")
 
     hotpotqa_setup_code = [
         "import os\n",
@@ -342,7 +351,8 @@ def generate_notebook():
             "    \n",
         ])
     else:
-        hotpotqa_setup_code.append("    # Note: process_hotpotqa_data.py not found locally, ensure it exists in data/\n")
+        hotpotqa_setup_code.append(
+            "    # Note: process_hotpotqa_data.py not found locally, ensure it exists in data/\n")
 
     hotpotqa_setup_code.extend([
         "    print('\u2699\ufe0f Processing HotpotQA data...')\n",
@@ -363,9 +373,62 @@ def generate_notebook():
         "source": hotpotqa_setup_code
     })
 
-    # ===== Cell: Run HotpotQA Comparison =====
-    hotpotqa_exists = os.path.exists("data/processed_hotpotqa.py") or os.path.exists("../data/processed_hotpotqa.py")
+    # ===== 新增：Cell 6.5 Setup BeerQA Data =====
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 6.5 Setup BeerQA Dataset (Optional)\n",
+            "\n",
+            "This cell will automatically set up the BeerQA dataset (domain-specific multi-hop QA for beer).\n",
+            "Requires `raw_beerqa.json` to be present in the `data/` directory (local domain dataset).\n",
+            "\n",
+            "**Skip this cell if you only want to use Sample Essays/SQuAD/HotpotQA mode.**"
+        ]
+    })
 
+    beerqa_setup_code = [
+        "import os\n",
+        "import base64\n",
+        "\n",
+        "# Check if BeerQA data already exists\n",
+        "if os.path.exists('data/processed_beerqa.py'):\n",
+        "    size_mb = os.path.getsize('data/processed_beerqa.py') / (1024 * 1024)\n",
+        "    print(f'\u2705 BeerQA dataset already exists ({size_mb:.1f} MB)')\n",
+        "else:\n",
+        "    # Check if raw BeerQA file exists\n",
+        "    raw_beerqa_path = 'data/raw_beerqa.json'\n",
+        "    if not os.path.exists(raw_beerqa_path):\n",
+        "        print('\u274c Error: raw_beerqa.json not found in data/ directory!')\n",
+        "        print('   Please place your raw BeerQA JSON file at:', os.path.abspath(raw_beerqa_path))\n",
+        "    else:\n",
+        "        print('\ud83d\udce5 Found raw BeerQA dataset, starting processing...')\n",
+        "        # Write the BeerQA processing script\n",
+        "        script_b64 = '{process_beerqa_b64}'\n".format(process_beerqa_b64=process_beerqa_b64),
+        "        os.makedirs('data', exist_ok=True)\n",
+        "        with open('data/process_beerqa.py', 'wb') as f:\n",
+        "            f.write(base64.b64decode(script_b64))\n",
+        "        \n",
+        "        print('\u2699\ufe0f Processing BeerQA data (strict cleaning + format conversion)...')\n",
+        "        !python data/process_beerqa.py\n",
+        "        \n",
+        "        if os.path.exists('data/processed_beerqa.py'):\n",
+        "            size_mb = os.path.getsize('data/processed_beerqa.py') / (1024 * 1024)\n",
+        "            print(f'\u2705 BeerQA dataset generated ({size_mb:.1f} MB)')\n",
+        "            print(f'\u2705 Cleaning logs saved to beerqa_clean_logs.json')\n",
+        "        else:\n",
+        "            print('\u274c Failed to generate BeerQA dataset')\n"
+    ]
+
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": beerqa_setup_code
+    })
+
+    # ===== Cell: Run HotpotQA Comparison =====
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
@@ -382,7 +445,6 @@ def generate_notebook():
             "- `--verbose`: Show detailed output"
         ]
     })
-    
 
     hotpotqa_cell_source = [
         "# Run baseline comparison on HotpotQA dataset (multi-hop QA)\n",
@@ -390,10 +452,12 @@ def generate_notebook():
     ]
 
     if hotpotqa_exists:
-        hotpotqa_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
+        hotpotqa_cell_source.append(
+            "!python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
     else:
         hotpotqa_cell_source.append("# Note: HotpotQA data not set up. Run cell 5.5 first to set up HotpotQA.\n")
-        hotpotqa_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
+        hotpotqa_cell_source.append(
+            "# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
 
     cells.append({
         "cell_type": "code",
@@ -403,12 +467,51 @@ def generate_notebook():
         "source": hotpotqa_cell_source
     })
 
+    # ===== 新增：Cell 7. Run BeerQA Comparison =====
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 7. Run Baseline Comparison (BeerQA)\n",
+            "\n",
+            "This cell runs comparison on the BeerQA dataset (domain-specific multi-hop QA).\n",
+            "\n",
+            "**Parameters:**\n",
+            "- `--beerqa`: Enable BeerQA mode\n",
+            "- `--titles N`: Number of titles to evaluate (default: 10)\n",
+            "- `--max-questions N`: Max questions per title (default: 5)\n",
+            "- `--epochs N`: Digestion epochs (default: 50)\n",
+            "- `--verbose`: Show detailed output"
+        ]
+    })
+
+    beerqa_cell_source = [
+        "# Run baseline comparison on BeerQA dataset (domain-specific multi-hop QA)\n",
+        "\n"
+    ]
+
+    if beerqa_exists:
+        beerqa_cell_source.append(
+            "!python projects/hybrid_titans/compare_baselines.py --beerqa --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
+    else:
+        beerqa_cell_source.append("# Note: BeerQA data not set up. Run cell 6.5 first to set up BeerQA.\n")
+        beerqa_cell_source.append(
+            "# !python projects/hybrid_titans/compare_baselines.py --beerqa --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
+
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": beerqa_cell_source
+    })
+
     # ===== Cell: Custom Comparison (Optional) =====
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "## 7. Custom Comparison (Optional)\n",
+            "## 8. Custom Comparison (Optional)\n",
             "\n",
             "Run the comparison with your own parameters."
         ]
@@ -429,16 +532,20 @@ def generate_notebook():
             "# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 10 --max-questions 5 --epochs 50 --verbose\n",
             "\n",
             "# Custom parameters for HotpotQA\n",
-            "# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 20 --max-questions 10 --epochs 300 --verbose"
+            "# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 20 --max-questions 10 --epochs 300 --verbose\n",
+            "\n",
+            "# 新增：BeerQA 自定义参数\n",
+            "# Custom parameters for BeerQA\n",
+            "# !python projects/hybrid_titans/compare_baselines.py --beerqa --titles 20 --max-questions 10 --epochs 300 --verbose"
         ]
     })
-    
+
     # --- Cell: Download Evaluation Results ---
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "## 8. Download Evaluation Results\n",
+            "## 9. Download Evaluation Results\n",
             "\n",
             "Download saved JSON results from the `evaluations/` directory to your local machine."
         ]
@@ -468,7 +575,6 @@ def generate_notebook():
         ]
     })
 
-
     # Notebook structure
     notebook = {
         "cells": cells,
@@ -486,7 +592,7 @@ def generate_notebook():
         "nbformat": 4,
         "nbformat_minor": 4
     }
-    
+
     return notebook
 
 
@@ -496,17 +602,17 @@ def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
     os.chdir(project_root)
-    
+
     print("Generating Baseline Comparison Notebook...")
     notebook = generate_notebook()
-    
+
     # Write notebook
     output_path = os.path.join(project_root, "notebooks", "Baseline_Comparison.ipynb")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
+
     with open(output_path, 'w') as f:
         json.dump(notebook, f, indent=2)
-    
+
     print(f"✅ Generated: {output_path}")
 
 
