@@ -1,0 +1,21 @@
+Train Accuracy: 0.8533
+Train Classification Report:
+              precision    recall  f1-score   support
+
+        不可检索       0.86      0.71      0.78     25106
+         可检索       0.85      0.93      0.89     44350
+
+    accuracy                           0.85     69456
+   macro avg       0.86      0.82      0.83     69456
+weighted avg       0.85      0.85      0.85     69456
+
+Test Accuracy: 0.8265
+Test Classification Report:
+              precision    recall  f1-score   support
+
+        不可检索       0.82      0.67      0.74      6277
+         可检索       0.83      0.92      0.87     11088
+
+    accuracy                           0.83     17365
+   macro avg       0.82      0.79      0.80     17365
+weighted avg       0.83      0.83      0.82     17365
