@@ -1,5 +1,0 @@
-torch
-sentence-transformers
-datasets
-transformers
-numpy
