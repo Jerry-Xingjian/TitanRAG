@@ -59,6 +59,9 @@ def generate_notebook():
     essays_b64 = get_b64_safe("data/sample_essays.py")
     init_b64 = base64.b64encode(b"# Common modules").decode("utf-8")
     
+    rag_infer_b64 = get_b64_optional("is_RAG_able/rag_infer.py")
+    init_empty_b64 = base64.b64encode(b"").decode("utf-8")
+    
     # Check if processed_squad.py exists (but don't embed it - too large!)
     squad_exists = os.path.exists("data/processed_squad.py") or os.path.exists("../data/processed_squad.py")
     
@@ -71,12 +74,13 @@ def generate_notebook():
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "# Baseline Comparison: PureRAG vs TitanOnly vs HybridRAG\n",
+            "# Baseline Comparison: PureRAG vs TitanOnly vs HybridRAG vs HybridRAGV2\n",
             "\n",
-            "This notebook compares three retrieval strategies:\n",
+            "This notebook compares retrieval strategies:\n",
             "- **PureRAG**: BM25 + Embedding (no Memory)\n",
             "- **TitanOnly**: Memory-guided retrieval only\n", 
             "- **HybridRAG**: BM25 + Memory + Embedding fusion\n",
+            "- **HybridRAGV2**: Selective Digestion & Split Top-K Retrieval\n",
             "\n",
             "### Modes:\n",
             "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
@@ -99,7 +103,7 @@ def generate_notebook():
         "outputs": [],
         "source": [
             "# Install required packages\n",
-            "!pip install -q torch sentence-transformers transformers tqdm"
+            "!pip install -q torch sentence-transformers transformers tqdm scikit-learn"
         ]
     })
     
@@ -135,7 +139,14 @@ def generate_notebook():
         f"    'projects/hybrid_titans/common/llm_utils.py': '{llm_utils_b64}',\n",
         f"    'projects/hybrid_titans/common/text_utils.py': '{text_utils_b64}',\n",
         f"    'projects/hybrid_titans/baselines.py': '{baselines_b64}',\n",
-        f"    'projects/hybrid_titans/compare_baselines.py': '{compare_b64}'\n",
+        f"    'projects/hybrid_titans/compare_baselines.py': '{compare_b64}'\n"
+    ]
+    
+    if rag_infer_b64:
+        setup_code.append(f"    ,'is_RAG_able/rag_infer.py': '{rag_infer_b64}'\n")
+        setup_code.append(f"    ,'is_RAG_able/__init__.py': '{init_empty_b64}'\n")
+        
+    setup_code.extend([
         "}\n",
         "\n",
         "print(f'Setting up {len(files)} core files...')\n",
@@ -143,7 +154,7 @@ def generate_notebook():
         "    write_file(path, content)\n",
         "\n",
         "print('\\n✅ Core files ready!')\n"
-    ]
+    ])
     
     cells.append({
         "cell_type": "code",

@@ -22,6 +22,8 @@ Usage:
 """
 
 import argparse
+from typing import List, Dict, Tuple
+import torch
 import sys
 import os
 import re
@@ -44,7 +46,14 @@ from common.embedders import SentenceTransformerEmbedder
 from common.titan_utils import create_titan_rag
 from common.llm_utils import FlanT5Generator
 from common.text_utils import split_into_chunks
-from baselines import create_retrievers
+from baselines import create_retrievers, BaseRetriever, HybridRAGV2
+
+# Add try-except for rag_infer to fail gracefully if skipped
+try:
+    from is_RAG_able.rag_infer import RAGConfidenceScorer
+except ImportError:
+    RAGConfidenceScorer = None
+    print("Warning: RAGConfidenceScorer not found. Hybrid_v2 may not work.")
 
 
 # Import essays from data directory
@@ -264,15 +273,76 @@ def run_sample_essay_mode(args):
 
     # Create retrievers and evaluate
     retrievers = create_retrievers(embedder, llm, titan_rag)
+    
+    # Init Scorer
+    scorer = None
+    if RAGConfidenceScorer:
+        scorer = RAGConfidenceScorer(device=DEVICE)
+        
+    # --- PREPARE DATA FOR V2 (Selective Digestion) ---
+    v2_ready = False
+    if scorer and "hybrid_v2" in retrievers:
+        try:
+            # 1. Score chunks
+            q_dummy = [questions[0][0]] * len(chunks) if questions else [""] * len(chunks)
+            scores = scorer.predict_batch(q_dummy, chunks)
+            
+            # 2. Split chunks
+            rag_chunks, rag_embs = [], []
+            titan_chunks, titan_embs = [], []
+            
+            for idx, (chunk, score) in enumerate(zip(chunks, scores)):
+                if score >= 0.5:
+                    rag_chunks.append(chunk)
+                    rag_embs.append(chunk_embeddings[idx])
+                else:
+                    titan_chunks.append(chunk)
+                    titan_embs.append(chunk_embeddings[idx])
+                    
+            rag_embeddings_t = torch.stack(rag_embs) if rag_embs else None
+            titan_embeddings_t = torch.stack(titan_embs) if titan_embs else None
+            
+            print(f"   [V2 Split] Retrievable: {len(rag_chunks)} (RAG), Hard: {len(titan_chunks)} (Titan)")
+            
+            # 3. Dedicated Titan memory for hard chunks
+            titan_v2 = create_titan_rag(dim=256)
+            if titan_chunks:
+                print(f"\n🧠 Digesting {len(titan_chunks)} hard chunks into V2 memory ({args.epochs} epochs)...")
+                _digest_chunks(embedder, titan_v2, titan_chunks, args.epochs, inline=True)
+            
+            # 4. Attach specific memory to v2
+            retrievers["hybrid_v2"].titan_rag = titan_v2
+            v2_ready = True
+        except Exception as e:
+            print(f"   [V2 Error] Failed to prepare split retrieval: {e}")
 
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 60 + "\n")
+    
     results_summary = {}
     all_details = {}
     for name, retriever in retrievers.items():
-        print(f"\n📊 Evaluating: {name.upper()}")
+        print(f"📊 Evaluating: {name.upper()}")
         print("-" * 40)
-        accuracy, results = evaluate_retriever(retriever, chunks, chunk_embeddings, questions,
-                                               embedder=embedder, topk=args.topk)
+        
+        if name == "hybrid_v2":
+            if not v2_ready:
+                print("   Skipped due to V2 setup failure.")
+                continue
+            accuracy, results = evaluate_retriever_v2(
+                retriever, 
+                rag_chunks, rag_embeddings_t,
+                titan_chunks, titan_embeddings_t,
+                questions,
+                verbose=True, show_progress=False,
+                embedder=embedder, topk=args.topk
+            )
+        else:
+            accuracy, results = evaluate_retriever(
+                retriever, chunks, chunk_embeddings, questions,
+                verbose=True, show_progress=False,
+                embedder=embedder, topk=args.topk
+            )
+            
         results_summary[name] = accuracy
         all_details[name] = results
         print(f"\n   Accuracy: {accuracy:.1f}%")
@@ -428,19 +498,87 @@ def _save_results(dataset_name, config, summary, details=None):
     print(f"\n💾 Results saved to: {rel_path}")
 
 
+def evaluate_retriever_v2(retriever: HybridRAGV2, 
+                          rag_chunks: List[str], rag_embeddings: torch.Tensor,
+                          titan_chunks: List[str], titan_embeddings: torch.Tensor,
+                          questions: List[Tuple[str, str]], verbose: bool = False, 
+                          show_progress: bool = True, embedder=None, topk: int = 5) -> Tuple[float, List[Dict]]:
+    """Evaluate HybridRAGV2 using split document pools."""
+    correct = 0
+    total = len(questions)
+    results = []
+    progress_chars = []
+    
+    for i, (question, expected) in enumerate(questions):
+        try:
+            ans_data = retriever.answer_split(
+                question, 
+                rag_chunks, rag_embeddings,
+                titan_chunks, titan_embeddings,
+                topk=topk
+            )
+            model_answer = ans_data["answer"]
+            is_correct = evaluate_answer_quality(expected, model_answer, embedder=embedder)
+            
+            if is_correct:
+                correct += 1
+                
+            results.append({
+                "question": question,
+                "expected": expected,
+                "answer": model_answer,
+                "correct": is_correct,
+                "mode": "split_topk"
+            })
+            
+            if show_progress:
+                status_char = "." if is_correct else "x"
+                progress_chars.append(status_char)
+                if (i + 1) % 10 == 0 or i == total - 1:
+                    print(f"      [{i+1}/{total}] {''.join(progress_chars[-10:])}", end="\\r")
+            
+            if verbose:
+                status = "ok" if is_correct else "X"
+                print(f"      [{i+1}/{total}] {status} Q: {question[:50]}")
+                print(f"           Exp: {expected[:40]}")
+                print(f"           Got: {model_answer[:40]}")
+                
+        except Exception as e:
+            if verbose:
+                print(f"      [{i+1}/{total}] Error Q: {question[:50]} -> {e}")
+            results.append({
+                "question": question,
+                "expected": expected,
+                "answer": f"ERROR: {str(e)}",
+                "correct": False,
+                "mode": "error"
+            })
+            
+    if show_progress:
+        print()
+            
+    accuracy = (correct / total) * 100 if total > 0 else 0.0
+    return accuracy, results
+
+
 def run_dataset_mode(args, contexts, questions, dataset_name):
     """
     Shared evaluation logic for dataset-based modes (SQuAD, HotpotQA, etc.).
     
     Each title gets its own Titan memory, chunks are digested independently,
-    and all three retrievers are evaluated per-title.
+    and all retrievers are evaluated per-title.
     """
     print("=" * 60)
-    print("BASELINE COMPARISON: PureRAG vs TitanOnly vs HybridRAG")
+    print("BASELINE COMPARISON: PureRAG vs TitanOnly vs HybridRAG vs HybridRAGV2")
     print(f"Mode: {dataset_name} ({args.titles} titles)")
     print("=" * 60)
 
     embedder, llm, DEVICE = _init_components()
+    
+    # Init Scorer
+    scorer = None
+    if RAGConfidenceScorer:
+        scorer = RAGConfidenceScorer(device=DEVICE)
 
     # Select titles to evaluate
     all_titles = list(contexts.keys())
@@ -456,7 +594,8 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
     all_results = {
         "pure_rag": {"correct": 0, "total": 0},
         "titan_only": {"correct": 0, "total": 0},
-        "hybrid": {"correct": 0, "total": 0}
+        "hybrid": {"correct": 0, "total": 0},
+        "hybrid_v2": {"correct": 0, "total": 0}
     }
     all_details = {name: {} for name in all_results}  # {retriever: {title: [results]}}
 
@@ -478,23 +617,75 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
         print(f"   Context length: {len(context)} chars")
         print(f"   Questions: {len(title_questions)}")
 
-        titan_rag = create_titan_rag(dim=256)
         chunks = _chunk_context(context)
         print(f"   Chunks: {len(chunks)}")
-
+        
+        # --- PREPARE DATA FOR V1 (All chunks digested) ---
         chunk_embeddings = embedder.embed_batch(chunks)
+        
+        titan_rag = create_titan_rag(dim=256)
         _digest_chunks(embedder, titan_rag, chunks, args.epochs, inline=True)
 
         is_multihop = dataset_name.lower() in ('hotpotqa',)
         retrievers = create_retrievers(embedder, llm, titan_rag, multihop=is_multihop)
 
+        # --- PREPARE DATA FOR V2 (Selective Digestion) ---
+        v2_ready = False
+        if scorer and "hybrid_v2" in retrievers:
+            try:
+                # 1. Score chunks
+                q_dummy = [title_questions[0][0]] * len(chunks) if title_questions else [""] * len(chunks)
+                scores = scorer.predict_batch(q_dummy, chunks)
+                
+                # 2. Split chunks (threshold 0.5)
+                rag_chunks, rag_embs = [], []
+                titan_chunks, titan_embs = [], []
+                
+                for idx, (chunk, score) in enumerate(zip(chunks, scores)):
+                    if score >= 0.5:
+                        rag_chunks.append(chunk)
+                        rag_embs.append(chunk_embeddings[idx])
+                    else:
+                        titan_chunks.append(chunk)
+                        titan_embs.append(chunk_embeddings[idx])
+                        
+                rag_embeddings_t = torch.stack(rag_embs) if rag_embs else None
+                titan_embeddings_t = torch.stack(titan_embs) if titan_embs else None
+                
+                print(f"   [V2 Split] Retrievable: {len(rag_chunks)} (RAG), Hard: {len(titan_chunks)} (Titan)")
+                
+                # 3. Dedicated Titan memory for hard chunks
+                titan_v2 = create_titan_rag(dim=256)
+                if titan_chunks:
+                    _digest_chunks(embedder, titan_v2, titan_chunks, args.epochs, inline=True)
+                
+                # 4. Attach specific memory to v2
+                retrievers["hybrid_v2"].titan_rag = titan_v2
+                v2_ready = True
+            except Exception as e:
+                print(f"   [V2 Error] Failed to prepare split retrieval: {e}")
+
+        # --- EVALUATE ALL ---
         for name, retriever in retrievers.items():
-            print(f"   [{name}] Evaluating...", end="", flush=True)
-            accuracy, results = evaluate_retriever(
-                retriever, chunks, chunk_embeddings, title_questions,
-                verbose=args.verbose, show_progress=not args.verbose,
-                embedder=embedder, topk=args.topk
-            )
+            if name == "hybrid_v2":
+                if not v2_ready:
+                    continue
+                print(f"   [{name}] Evaluating...", end="", flush=True)
+                accuracy, results = evaluate_retriever_v2(
+                    retriever, 
+                    rag_chunks, rag_embeddings_t,
+                    titan_chunks, titan_embeddings_t,
+                    title_questions,
+                    verbose=args.verbose, show_progress=not args.verbose,
+                    embedder=embedder, topk=args.topk
+                )
+            else:
+                print(f"   [{name}] Evaluating...", end="", flush=True)
+                accuracy, results = evaluate_retriever(
+                    retriever, chunks, chunk_embeddings, title_questions,
+                    verbose=args.verbose, show_progress=not args.verbose,
+                    embedder=embedder, topk=args.topk
+                )
 
             correct_count = sum(1 for r in results if r["correct"])
             all_results[name]["correct"] += correct_count

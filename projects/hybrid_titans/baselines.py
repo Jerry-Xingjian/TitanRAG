@@ -5,6 +5,7 @@ Three modes:
 - PureRAG: BM25 + Embedding (no Memory)
 - TitanOnly: Memory-guided retrieval only
 - HybridRAG: BM25 + Memory + Embedding fusion
+- HybridRAGV2: Split Top-K retrieval (Retrievable vs Non-Retrievable pools)
 """
 
 import torch
@@ -363,6 +364,119 @@ class HybridRAG(BaseRetriever):
         self.titan_rag.titan.ltm.forward_with_update(query_vec, answer_vec)
 
 
+class HybridRAGV2(BaseRetriever):
+    """
+    Hybrid RAG v2: Selective Digestion & Split Top-K Retrieval.
+    
+    Expects documents to be pre-split into:
+    1. rag_docs (Retrievable): Searched via PureRAG (BM25 + Embedding)
+    2. titan_docs (Non-Retrievable): Searched via Titan (Memory)
+    """
+    
+    def __init__(self, embedder, llm_generator, titan_rag,
+                 base_bm25_weight: float = 0.4,
+                 base_embed_weight: float = 0.6,
+                 multihop: bool = False):
+        super().__init__(embedder, llm_generator, multihop=multihop)
+        self.titan_rag = titan_rag
+        self.bm25_weight = base_bm25_weight
+        self.embed_weight = base_embed_weight
+        
+    def retrieve_split(self, question: str, 
+                       rag_docs: List[str], rag_embeddings: torch.Tensor,
+                       titan_docs: List[str], titan_embeddings: torch.Tensor,
+                       topk: int = 5) -> Tuple[str, Dict]:
+        """Perform split retrieval on two separate document pools."""
+        dim = self.embedder.target_dim
+        
+        # Embed question
+        query_emb = self.embedder(question)
+        query_flat = query_emb.reshape(-1, dim)
+        query_vec = query_flat.mean(dim=0)
+        
+        with torch.no_grad():
+            # --- POOL 1: RAG Docs (PureRAG Logic) ---
+            rag_results = []
+            if rag_docs and rag_embeddings is not None and len(rag_docs) > 0:
+                bm25_scores = compute_bm25_scores(question, rag_docs)
+                embed_scores = F.cosine_similarity(query_vec.unsqueeze(0), rag_embeddings)
+                bm25_scores = bm25_scores.to(rag_embeddings.device)
+                
+                fused_rag_scores = (
+                    self.bm25_weight * normalize_scores(bm25_scores) +
+                    self.embed_weight * normalize_scores(embed_scores)
+                )
+                
+                # Get local Top-K from RAG pool
+                k_rag = min(topk, len(rag_docs))
+                if k_rag > 0:
+                    vals, idxs = fused_rag_scores.topk(k_rag)
+                    for v, i in zip(vals.tolist(), idxs.tolist()):
+                        rag_results.append((v, rag_docs[i], "rag"))
+            
+            # --- POOL 2: Titan Docs (Memory Logic) ---
+            titan_results = []
+            if titan_docs and titan_embeddings is not None and len(titan_docs) > 0:
+                memory_output = self.titan_rag.titan.ltm.forward_no_update(query_flat)
+                memory_vec = memory_output.mean(dim=0)
+                
+                memory_scores = F.cosine_similarity(memory_vec.unsqueeze(0), titan_embeddings)
+                
+                # Get local Top-K from Titan pool
+                k_titan = min(topk, len(titan_docs))
+                if k_titan > 0:
+                    vals, idxs = memory_scores.topk(k_titan)
+                    for v, i in zip(vals.tolist(), idxs.tolist()):
+                        titan_results.append((v, titan_docs[i], "titan"))
+                        
+        # --- MERGE & SORT ---
+        # Sort both result sets by their respective normalized scores (descending)
+        rag_results.sort(key=lambda x: x[0], reverse=True)
+        titan_results.sort(key=lambda x: x[0], reverse=True)
+        
+        # Interleave or take top from combined (using normalized scores as proxy)
+        all_results = rag_results + titan_results
+        all_results.sort(key=lambda x: x[0], reverse=True)
+        
+        final_topk = all_results[:topk]
+        
+        # Build context
+        context_lines = [item[1] for item in final_topk]
+        context = "\n\n".join(context_lines)
+        
+        return context, {
+            "mode": "HybridRAGV2",
+            "rag_pool_size": len(rag_docs) if rag_docs else 0,
+            "titan_pool_size": len(titan_docs) if titan_docs else 0,
+            "selected_sources": [item[2] for item in final_topk]
+        }
+        
+    def answer_split(self, question: str, 
+                     rag_docs: List[str], rag_embeddings: torch.Tensor,
+                     titan_docs: List[str], titan_embeddings: torch.Tensor,
+                     topk: int = 5, max_new_tokens: int = 100) -> Dict:
+        """Full pipeline for split retrieval."""
+        context, details = self.retrieve_split(
+            question, rag_docs, rag_embeddings, titan_docs, titan_embeddings, topk)
+            
+        answer, prompt = self.llm.generate_qa(question, context, max_new_tokens,
+                                                multihop=self.multihop)
+        
+        return {
+            "answer": answer,
+            "context": context,
+            "prompt": prompt,
+            "retrieval_details": details,
+            "mode": self.__class__.__name__
+        }
+        
+    def retrieve(self, *args, **kwargs):
+        raise NotImplementedError("HybridRAGV2 requires retrieve_split() to be used.")
+        
+    def answer(self, *args, **kwargs):
+        raise NotImplementedError("HybridRAGV2 requires answer_split() to be used.")
+
+
 def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -> Dict[str, BaseRetriever]:
     """
     Factory function to create all retriever instances.
@@ -383,5 +497,6 @@ def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -
     if titan_rag is not None:
         retrievers["titan_only"] = TitanOnly(embedder, llm_generator, titan_rag, multihop=multihop)
         retrievers["hybrid"] = HybridRAG(embedder, llm_generator, titan_rag, multihop=multihop)
+        retrievers["hybrid_v2"] = HybridRAGV2(embedder, llm_generator, titan_rag, multihop=multihop)
     
     return retrievers
