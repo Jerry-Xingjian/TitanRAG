@@ -366,27 +366,38 @@ class HybridRAG(BaseRetriever):
 
 class HybridRAGV2(BaseRetriever):
     """
-    Hybrid RAG v2: Selective Digestion & Split Top-K Retrieval.
+    Hybrid RAG v2: Query-Time Dynamic Routing.
     
-    Expects documents to be pre-split into:
-    1. rag_docs (Retrievable): Searched via PureRAG (BM25 + Embedding)
-    2. titan_docs (Non-Retrievable): Searched via Titan (Memory)
+    At retrieval time, scores each (question, chunk) pair using a RAG
+    confidence model. High-confidence chunks are retrieved via BM25+Embedding,
+    low-confidence chunks are retrieved via Titan Memory. Results are merged.
+    
+    All chunks are digested into Titan memory (same as HybridRAG V1).
+    The routing decision happens dynamically per question.
     """
     
-    def __init__(self, embedder, llm_generator, titan_rag,
+    def __init__(self, embedder, llm_generator, titan_rag, scorer=None,
                  base_bm25_weight: float = 0.4,
                  base_embed_weight: float = 0.6,
+                 confidence_threshold: float = 0.5,
                  multihop: bool = False):
         super().__init__(embedder, llm_generator, multihop=multihop)
         self.titan_rag = titan_rag
+        self.scorer = scorer
         self.bm25_weight = base_bm25_weight
         self.embed_weight = base_embed_weight
+        self.confidence_threshold = confidence_threshold
         
-    def retrieve_split(self, question: str, 
-                       rag_docs: List[str], rag_embeddings: torch.Tensor,
-                       titan_docs: List[str], titan_embeddings: torch.Tensor,
-                       topk: int = 5) -> Tuple[str, Dict]:
-        """Perform split retrieval on two separate document pools."""
+    def retrieve(self, question: str, documents: List[str],
+                 doc_embeddings: torch.Tensor, topk: int = 5) -> Tuple[str, Dict]:
+        """
+        Dynamic routing retrieval.
+        
+        1. Score all (question, chunk) pairs
+        2. High-score chunks → BM25 + Embedding
+        3. Low-score chunks → Titan Memory
+        4. Merge & rank Top-K
+        """
         dim = self.embedder.target_dim
         
         # Embed question
@@ -394,90 +405,74 @@ class HybridRAGV2(BaseRetriever):
         query_flat = query_emb.reshape(-1, dim)
         query_vec = query_flat.mean(dim=0)
         
+        # --- STEP 1: Score chunks for routability ---
+        if self.scorer is not None:
+            questions_repeated = [question] * len(documents)
+            confidence_scores = self.scorer.predict_batch(questions_repeated, documents)
+        else:
+            # Fallback: treat all as retrievable (degrades to PureRAG + Memory blend)
+            confidence_scores = [0.5] * len(documents)
+        
+        # --- STEP 2: Split indices by confidence ---
+        rag_indices = []
+        titan_indices = []
+        for idx, score in enumerate(confidence_scores):
+            if score >= self.confidence_threshold:
+                rag_indices.append(idx)
+            else:
+                titan_indices.append(idx)
+        
+        all_scored = []  # (score, doc_text, source_label)
+        
         with torch.no_grad():
-            # --- POOL 1: RAG Docs (PureRAG Logic) ---
-            rag_results = []
-            if rag_docs and rag_embeddings is not None and len(rag_docs) > 0:
-                bm25_scores = compute_bm25_scores(question, rag_docs)
-                embed_scores = F.cosine_similarity(query_vec.unsqueeze(0), rag_embeddings)
-                bm25_scores = bm25_scores.to(rag_embeddings.device)
+            # --- POOL 1: RAG path (BM25 + Embedding) for high-confidence chunks ---
+            if rag_indices:
+                rag_docs = [documents[i] for i in rag_indices]
+                rag_embs = doc_embeddings[rag_indices]
                 
-                fused_rag_scores = (
+                bm25_scores = compute_bm25_scores(question, rag_docs)
+                embed_scores = F.cosine_similarity(query_vec.unsqueeze(0), rag_embs)
+                bm25_scores = bm25_scores.to(rag_embs.device)
+                
+                fused = (
                     self.bm25_weight * normalize_scores(bm25_scores) +
                     self.embed_weight * normalize_scores(embed_scores)
                 )
                 
-                # Get local Top-K from RAG pool
-                k_rag = min(topk, len(rag_docs))
-                if k_rag > 0:
-                    vals, idxs = fused_rag_scores.topk(k_rag)
-                    for v, i in zip(vals.tolist(), idxs.tolist()):
-                        rag_results.append((v, rag_docs[i], "rag"))
+                for local_idx, global_idx in enumerate(rag_indices):
+                    all_scored.append((fused[local_idx].item(), documents[global_idx], "rag"))
             
-            # --- POOL 2: Titan Docs (Memory Logic) ---
-            titan_results = []
-            if titan_docs and titan_embeddings is not None and len(titan_docs) > 0:
+            # --- POOL 2: Titan path (Memory) for low-confidence chunks ---
+            if titan_indices:
+                titan_embs = doc_embeddings[titan_indices]
+                
                 memory_output = self.titan_rag.titan.ltm.forward_no_update(query_flat)
                 memory_vec = memory_output.mean(dim=0)
+                memory_scores = F.cosine_similarity(memory_vec.unsqueeze(0), titan_embs)
                 
-                memory_scores = F.cosine_similarity(memory_vec.unsqueeze(0), titan_embeddings)
-                
-                # Get local Top-K from Titan pool
-                k_titan = min(topk, len(titan_docs))
-                if k_titan > 0:
-                    vals, idxs = memory_scores.topk(k_titan)
-                    for v, i in zip(vals.tolist(), idxs.tolist()):
-                        titan_results.append((v, titan_docs[i], "titan"))
-                        
-        # --- MERGE & SORT ---
-        # Sort both result sets by their respective normalized scores (descending)
-        rag_results.sort(key=lambda x: x[0], reverse=True)
-        titan_results.sort(key=lambda x: x[0], reverse=True)
+                for local_idx, global_idx in enumerate(titan_indices):
+                    all_scored.append((memory_scores[local_idx].item(), documents[global_idx], "titan"))
         
-        # Interleave or take top from combined (using normalized scores as proxy)
-        all_results = rag_results + titan_results
-        all_results.sort(key=lambda x: x[0], reverse=True)
-        
-        final_topk = all_results[:topk]
+        # --- STEP 3: Merge & Rank ---
+        all_scored.sort(key=lambda x: x[0], reverse=True)
+        final_topk = all_scored[:topk]
         
         # Build context
         context_lines = [item[1] for item in final_topk]
         context = "\n\n".join(context_lines)
         
+        sources = [item[2] for item in final_topk]
         return context, {
-            "mode": "HybridRAGV2",
-            "rag_pool_size": len(rag_docs) if rag_docs else 0,
-            "titan_pool_size": len(titan_docs) if titan_docs else 0,
-            "selected_sources": [item[2] for item in final_topk]
+            "mode": "HybridRAGV2_DynamicRouting",
+            "rag_pool_size": len(rag_indices),
+            "titan_pool_size": len(titan_indices),
+            "selected_sources": sources,
+            "threshold": self.confidence_threshold
         }
-        
-    def answer_split(self, question: str, 
-                     rag_docs: List[str], rag_embeddings: torch.Tensor,
-                     titan_docs: List[str], titan_embeddings: torch.Tensor,
-                     topk: int = 5, max_new_tokens: int = 100) -> Dict:
-        """Full pipeline for split retrieval."""
-        context, details = self.retrieve_split(
-            question, rag_docs, rag_embeddings, titan_docs, titan_embeddings, topk)
-            
-        answer, prompt = self.llm.generate_qa(question, context, max_new_tokens,
-                                                multihop=self.multihop)
-        
-        return {
-            "answer": answer,
-            "context": context,
-            "prompt": prompt,
-            "retrieval_details": details,
-            "mode": self.__class__.__name__
-        }
-        
-    def retrieve(self, *args, **kwargs):
-        raise NotImplementedError("HybridRAGV2 requires retrieve_split() to be used.")
-        
-    def answer(self, *args, **kwargs):
-        raise NotImplementedError("HybridRAGV2 requires answer_split() to be used.")
 
 
-def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -> Dict[str, BaseRetriever]:
+def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False,
+                      scorer=None) -> Dict[str, BaseRetriever]:
     """
     Factory function to create all retriever instances.
     
@@ -486,9 +481,10 @@ def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -
         llm_generator: FlanT5Generator instance
         titan_rag: TitanRAG instance (required for TitanOnly and HybridRAG)
         multihop: If True, use multi-hop reasoning prompt (for HotpotQA)
+        scorer: RAGConfidenceScorer instance (optional, for HybridRAGV2)
     
     Returns:
-        dict: {"pure_rag": PureRAG, "titan_only": TitanOnly, "hybrid": HybridRAG}
+        dict: retriever name -> retriever instance
     """
     retrievers = {
         "pure_rag": PureRAG(embedder, llm_generator, multihop=multihop)
@@ -497,6 +493,7 @@ def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -
     if titan_rag is not None:
         retrievers["titan_only"] = TitanOnly(embedder, llm_generator, titan_rag, multihop=multihop)
         retrievers["hybrid"] = HybridRAG(embedder, llm_generator, titan_rag, multihop=multihop)
-        retrievers["hybrid_v2"] = HybridRAGV2(embedder, llm_generator, titan_rag, multihop=multihop)
+        retrievers["hybrid_v2"] = HybridRAGV2(embedder, llm_generator, titan_rag,
+                                               scorer=scorer, multihop=multihop)
     
     return retrievers

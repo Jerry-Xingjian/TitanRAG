@@ -48,33 +48,51 @@ class RAGConfidenceScorer:
         self.lb = LabelBinarizer()
         self.lb.fit(["what", "who", "how_many", "which", "why", "when", "other"])
 
-        # Load Model
-        # Need to read meta to get exact input_dim
-        meta_path = model_path + ".meta.json"
+        # Robust path resolution
+        possible_paths = [
+            model_path,
+            os.path.join(os.getcwd(), model_path),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', 'train_test_model.pt'),
+        ]
+        
+        # If in a notebook context where src/ is unzipped alongside is_RAG_able
+        notebook_dir = os.getcwd()
+        if os.path.basename(notebook_dir) == 'notebooks':
+            possible_paths.append(os.path.join(os.path.dirname(notebook_dir), model_path))
+            
+        final_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                final_path = p
+                break
+
+        # Need to read meta or state_dict to get exact input_dim
         input_dim = INPUT_DIM
+        meta_path = (final_path if final_path else model_path) + ".meta.json"
+        
+        state_dict_cache = None
         if os.path.exists(meta_path):
             with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
                 input_dim = meta.get("input_dim", INPUT_DIM)
+        elif final_path:
+            # Fallback: Peak into the state dict to find the fc1 weight shape
+            state_dict_cache = torch.load(final_path, map_location=self.device)
+            if 'fc1.weight' in state_dict_cache:
+                input_dim = state_dict_cache['fc1.weight'].shape[1]
 
         self.model = MLPClassifier(input_dim=input_dim)
-        
-        # Handle path relative to workspace root
-        if not os.path.exists(model_path):
-            # Try to find it if we are deeper in the directory
-            workspace_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-            alt_path = os.path.join(workspace_root, model_path)
-            if os.path.exists(alt_path):
-                model_path = alt_path
             
-        if os.path.exists(model_path):
-            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        if final_path:
+            if state_dict_cache is None:
+                state_dict_cache = torch.load(final_path, map_location=self.device)
+            self.model.load_state_dict(state_dict_cache)
             self.model.to(self.device)
             self.model.eval()
             self.model_loaded = True
-            print(f"✅ RAGConfidenceScorer loaded from {model_path}")
+            print(f"✅ RAGConfidenceScorer loaded from {final_path} (input_dim={input_dim})")
         else:
-            print(f"⚠️ Warning: RAG model not found at {model_path}. Will return default scores.")
+            print(f"⚠️ Warning: RAG model not found. Checked paths: {possible_paths}. Will return default scores.")
             self.model_loaded = False
 
     def extract_question_type(self, qs):

@@ -164,6 +164,37 @@ def generate_notebook():
         "source": setup_code
     })
     
+    # ===== Cell 3.1: Setup RAG Scorer Model =====
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["## 2.1 Setup Scorer Model\n",
+                   "In Colab, you need to manually upload the `train_test_model.pt` file to the directory `is_RAG_able/models/train_test_model.pt`.\n",
+                   "OR download it if hosted remotely."]
+    })
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": [
+            "import os\n",
+            "\n",
+            "model_dir = 'is_RAG_able/models'\n",
+            "model_path = os.path.join(model_dir, 'train_test_model.pt')\n",
+            "os.makedirs(model_dir, exist_ok=True)\n",
+            "\n",
+            "if not os.path.exists(model_path):\n",
+            "    print(f'⚠️ Model not found at {model_path}')\n",
+            "    print('Please upload train_test_model.pt to the colab filesystem at that path.')\n",
+            "    # If you have a download link, you can use: \n",
+            "    # !wget -O {model_path} \"YOUR_DOWNLOAD_LINK_HERE\"\n",
+            "else:\n",
+            "    size_mb = os.path.getsize(model_path) / (1024 * 1024)\n",
+            "    print(f'✅ Found model: {model_path} ({size_mb:.1f} MB)')\n"
+        ]
+    })
+    
     # ===== Cell 3.5: Setup SQuAD Data (auto-generate) =====
     cells.append({
         "cell_type": "markdown",
