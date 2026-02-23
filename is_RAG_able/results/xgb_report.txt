@@ -21,8 +21,9 @@ NotRetrievable       0.83      0.70      0.76      6277
   weighted avg       0.84      0.84      0.84     17365
 
 # Metric explanations:
-# precision: Of all samples predicted as this class, the proportion that are actually this class (true positive rate among predicted positives).
-# recall: Of all actual samples of this class, the proportion that are correctly predicted (true positive rate among actual positives).
+# precision: Of all samples predicted as this class, the proportion that are actually this class
+ (true positive rate among predicted positives).
+# recall: Of all actual samples of this class, the proportion that are correctly predicted (true positive rate among actual positiAves).
 # f1-score: Harmonic mean of precision and recall, reflecting the balance between them.
 # support: The number of true samples of this class in the dataset.
 # accuracy: Overall proportion of correctly predicted samples.
