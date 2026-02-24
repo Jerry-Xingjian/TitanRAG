@@ -80,7 +80,7 @@ def generate_notebook():
             "- **PureRAG**: BM25 + Embedding (no Memory)\n",
             "- **TitanOnly**: Memory-guided retrieval only\n", 
             "- **HybridRAG**: BM25 + Memory + Embedding fusion\n",
-            "- **HybridRAGV2**: Selective Digestion & Split Top-K Retrieval\n",
+            "- **HybridRAGV2**: Per-Chunk Soft Routing (XGBoost scorer)\n",
             "\n",
             "### Modes:\n",
             "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
@@ -103,7 +103,7 @@ def generate_notebook():
         "outputs": [],
         "source": [
             "# Install required packages\n",
-            "!pip install -q torch sentence-transformers transformers tqdm scikit-learn"
+            "!pip install -q torch sentence-transformers transformers tqdm scikit-learn xgboost joblib"
         ]
     })
     
@@ -164,35 +164,53 @@ def generate_notebook():
         "source": setup_code
     })
     
-    # ===== Cell 3.1: Setup RAG Scorer Model =====
+    # ===== Cell 3.1: Setup XGBoost Scorer Model =====
+    xgb_model_b64 = get_b64_optional("is_RAG_able/models/xgb_model.pkl")
+    
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
-        "source": ["## 2.1 Setup Scorer Model\n",
-                   "In Colab, you need to manually upload the `train_test_model.pt` file to the directory `is_RAG_able/models/train_test_model.pt`.\n",
-                   "OR download it if hosted remotely."]
+        "source": ["## 2.1 Setup XGBoost Scorer Model\n",
+                   "The XGBoost scorer model is used by HybridRAGV2 for per-chunk soft routing.\n",
+                   "It predicts how likely a (question, chunk) pair is retrievable by traditional RAG."]
     })
+    
+    if xgb_model_b64:
+        xgb_setup_source = [
+            "import os, base64\n",
+            "\n",
+            "model_dir = 'is_RAG_able/models'\n",
+            "model_path = os.path.join(model_dir, 'xgb_model.pkl')\n",
+            "os.makedirs(model_dir, exist_ok=True)\n",
+            "\n",
+            f"xgb_b64 = '{xgb_model_b64}'\n",
+            "with open(model_path, 'wb') as f:\n",
+            "    f.write(base64.b64decode(xgb_b64))\n",
+            "size_mb = os.path.getsize(model_path) / (1024 * 1024)\n",
+            "print(f'✅ XGBoost model written: {model_path} ({size_mb:.1f} MB)')\n"
+        ]
+    else:
+        xgb_setup_source = [
+            "import os\n",
+            "\n",
+            "model_dir = 'is_RAG_able/models'\n",
+            "model_path = os.path.join(model_dir, 'xgb_model.pkl')\n",
+            "os.makedirs(model_dir, exist_ok=True)\n",
+            "\n",
+            "if not os.path.exists(model_path):\n",
+            "    print(f'⚠️ XGBoost model not found at {model_path}')\n",
+            "    print('Please upload xgb_model.pkl to the colab filesystem at that path.')\n",
+            "else:\n",
+            "    size_mb = os.path.getsize(model_path) / (1024 * 1024)\n",
+            "    print(f'✅ Found model: {model_path} ({size_mb:.1f} MB)')\n"
+        ]
+    
     cells.append({
         "cell_type": "code",
         "execution_count": None,
         "metadata": {},
         "outputs": [],
-        "source": [
-            "import os\n",
-            "\n",
-            "model_dir = 'is_RAG_able/models'\n",
-            "model_path = os.path.join(model_dir, 'train_test_model.pt')\n",
-            "os.makedirs(model_dir, exist_ok=True)\n",
-            "\n",
-            "if not os.path.exists(model_path):\n",
-            "    print(f'⚠️ Model not found at {model_path}')\n",
-            "    print('Please upload train_test_model.pt to the colab filesystem at that path.')\n",
-            "    # If you have a download link, you can use: \n",
-            "    # !wget -O {model_path} \"YOUR_DOWNLOAD_LINK_HERE\"\n",
-            "else:\n",
-            "    size_mb = os.path.getsize(model_path) / (1024 * 1024)\n",
-            "    print(f'✅ Found model: {model_path} ({size_mb:.1f} MB)')\n"
-        ]
+        "source": xgb_setup_source
     })
     
     # ===== Cell 3.5: Setup SQuAD Data (auto-generate) =====

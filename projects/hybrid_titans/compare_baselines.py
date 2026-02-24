@@ -50,10 +50,10 @@ from baselines import create_retrievers, BaseRetriever
 
 # Add try-except for rag_infer to fail gracefully if skipped
 try:
-    from is_RAG_able.rag_infer import RAGConfidenceScorer
+    from is_RAG_able.rag_infer import XGBConfidenceScorer
 except ImportError:
-    RAGConfidenceScorer = None
-    print("Warning: RAGConfidenceScorer not found. Hybrid_v2 may not work.")
+    XGBConfidenceScorer = None
+    print("Warning: XGBConfidenceScorer not found. Hybrid_v2 may not work.")
 
 
 # Import essays from data directory
@@ -273,8 +273,8 @@ def run_sample_essay_mode(args):
 
     # Init Scorer
     scorer = None
-    if RAGConfidenceScorer:
-        scorer = RAGConfidenceScorer(device=DEVICE)
+    if XGBConfidenceScorer:
+        scorer = XGBConfidenceScorer(device=DEVICE)
 
     # Create retrievers and evaluate
     retrievers = create_retrievers(embedder, llm, titan_rag, scorer=scorer)
@@ -465,8 +465,8 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
     
     # Init Scorer
     scorer = None
-    if RAGConfidenceScorer:
-        scorer = RAGConfidenceScorer(device=DEVICE)
+    if XGBConfidenceScorer:
+        scorer = XGBConfidenceScorer(device=DEVICE)
 
     # Select titles to evaluate
     all_titles = list(contexts.keys())

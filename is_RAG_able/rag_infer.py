@@ -36,89 +36,66 @@ class MLPClassifier(nn.Module):
         out = self.fc5(x4)
         return out.squeeze(-1)
 
-class RAGConfidenceScorer:
-    """Wrapper to use the trained MLP model for inference."""
+
+class BaseConfidenceScorer:
+    """Base class with shared feature extraction logic for RAG confidence scoring.
     
-    def __init__(self, model_path="is_RAG_able/models/train_test_model.pt", embedder_name="all-MiniLM-L6-v2", device=None):
+    Subclasses only need to implement model loading and the final prediction step.
+    """
+    
+    def __init__(self, embedder_name="all-MiniLM-L6-v2", device=None):
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.embedder = SentenceTransformer(embedder_name)
+        self.model_loaded = False
         
-        # We need to recreate the LabelBinarizer and TFIDF vectorizer logic from training.
-        # Since the training script fits these per-batch, we emulate a single-batch prediction.
         self.lb = LabelBinarizer()
         self.lb.fit(["what", "who", "how_many", "which", "why", "when", "other"])
-
-        # Robust path resolution
+    
+    def _resolve_model_path(self, model_path, filename):
+        """Resolve model path from multiple possible locations."""
         possible_paths = [
             model_path,
             os.path.join(os.getcwd(), model_path),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', 'train_test_model.pt'),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', filename),
         ]
         
-        # If in a notebook context where src/ is unzipped alongside is_RAG_able
+        # Notebook context fallback
         notebook_dir = os.getcwd()
         if os.path.basename(notebook_dir) == 'notebooks':
             possible_paths.append(os.path.join(os.path.dirname(notebook_dir), model_path))
-            
-        final_path = None
+        
         for p in possible_paths:
             if os.path.exists(p):
-                final_path = p
-                break
-
-        # Need to read meta or state_dict to get exact input_dim
-        input_dim = INPUT_DIM
-        meta_path = (final_path if final_path else model_path) + ".meta.json"
-        
-        state_dict_cache = None
-        if os.path.exists(meta_path):
-            with open(meta_path, "r", encoding="utf-8") as f:
-                meta = json.load(f)
-                input_dim = meta.get("input_dim", INPUT_DIM)
-        elif final_path:
-            # Fallback: Peak into the state dict to find the fc1 weight shape
-            state_dict_cache = torch.load(final_path, map_location=self.device)
-            if 'fc1.weight' in state_dict_cache:
-                input_dim = state_dict_cache['fc1.weight'].shape[1]
-
-        self.model = MLPClassifier(input_dim=input_dim)
-            
-        if final_path:
-            if state_dict_cache is None:
-                state_dict_cache = torch.load(final_path, map_location=self.device)
-            self.model.load_state_dict(state_dict_cache)
-            self.model.to(self.device)
-            self.model.eval()
-            self.model_loaded = True
-            print(f"✅ RAGConfidenceScorer loaded from {final_path} (input_dim={input_dim})")
-        else:
-            print(f"⚠️ Warning: RAG model not found. Checked paths: {possible_paths}. Will return default scores.")
-            self.model_loaded = False
-
+                return p, possible_paths
+        return None, possible_paths
+    
     def extract_question_type(self, qs):
+        """Classify question type and return one-hot encoding."""
         types = []
         for q in qs:
             q = q.strip()
-            if q.startswith("什么"): types.append("what")
-            elif q.startswith("谁"): types.append("who")
-            elif q.startswith("多少") or q.startswith("几"): types.append("how_many")
-            elif q.startswith("哪"): types.append("which")
-            elif q.startswith("为何") or q.startswith("为什么"): types.append("why")
-            elif q.startswith("何时") or q.startswith("什么时候"): types.append("when")
-            else: types.append("other")
-        # Ensure correct categories by passing the pre-fitted classes
+            if q.startswith("什么"):
+                types.append("what")
+            elif q.startswith("谁"):
+                types.append("who")
+            elif q.startswith("多少") or q.startswith("几"):
+                types.append("how_many")
+            elif q.startswith("哪"):
+                types.append("which")
+            elif q.startswith("为何") or q.startswith("为什么"):
+                types.append("why")
+            elif q.startswith("何时") or q.startswith("什么时候"):
+                types.append("when")
+            else:
+                types.append("other")
         return self.lb.transform(types)
-
-    @torch.no_grad()
-    def predict_batch(self, questions: list[str], chunks: list[str]) -> np.ndarray:
-        """Predict confidence scores for a batch of (question, chunk) pairs.
+    
+    def _extract_features(self, questions, chunks):
+        """Extract feature matrix from (question, chunk) pairs.
         
         Returns:
-            np.ndarray: Array of probabilities in [0, 1]. Size equals len(questions).
+            np.ndarray: Feature matrix of shape (N, feature_dim).
         """
-        if not self.model_loaded:
-            return np.ones(len(questions)) * 0.5  # Fallback
-
         if len(questions) != len(chunks):
             raise ValueError("Number of questions and chunks must match.")
         
@@ -128,35 +105,30 @@ class RAGConfidenceScorer:
         
         # 2. String Lengths
         q_lens = np.array([len(q) for q in questions]).reshape(-1, 1)
-        # We don't have the "gold" answer at inference time. 
-        # The training code used it as a feature, which is technically a leak or oracle feature.
-        # We will approximate it with a dummy value (e.g. median answer length 10) or 0.
-        gold_lens = np.ones((len(questions), 1)) * 10 
+        # Dummy gold length (not available at inference time)
+        gold_lens = np.ones((len(questions), 1)) * 10
         
-        # 3. TF-IDF / BM25 (Per-batch emulation from train_test_model.py)
-        # Note: This is an approximation since the original used the whole training set to fit IDF
+        # 3. TF-IDF / BM25
         try:
             vectorizer = TfidfVectorizer().fit(chunks + questions)
             text_tfidf = vectorizer.transform(chunks)
             q_tfidf = vectorizer.transform(questions)
             
-            # BM25 emulation (just dot product in original code)
             scores = (q_tfidf * text_tfidf.T).toarray()
             bm25_diag = np.diag(scores).reshape(-1, 1)
             bm25_rank = np.argsort(-scores, axis=1)[:, 0].reshape(-1, 1)
             
-            # TF-IDF Cosine
             sims = cosine_similarity(q_tfidf, text_tfidf)
             tfidf_cos = np.diag(sims).reshape(-1, 1)
         except ValueError:
-            # Fallback if vocabulary is empty
             n = len(questions)
             bm25_diag = np.zeros((n, 1))
             bm25_rank = np.zeros((n, 1))
             tfidf_cos = np.zeros((n, 1))
-
-        # 4. Neural Embeddings distances
-        def safe_norm(v): return v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-8)
+        
+        # 4. Neural Embedding distances
+        def safe_norm(v):
+            return v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-8)
         
         cos_sim = np.sum(safe_norm(q_embs) * safe_norm(s_embs), axis=1, keepdims=True)
         eu_dist = np.linalg.norm(q_embs - s_embs, axis=1, keepdims=True)
@@ -165,7 +137,8 @@ class RAGConfidenceScorer:
         # Jaccard
         def jaccard(a, b):
             sa, sb = set(a.split()), set(b.split())
-            if not sa or not sb: return 0.0
+            if not sa or not sb:
+                return 0.0
             return len(sa & sb) / len(sa | sb)
         jaccard_sim = np.array([jaccard(q, s) for q, s in zip(questions, chunks)]).reshape(-1, 1)
         
@@ -177,30 +150,125 @@ class RAGConfidenceScorer:
             q_lens, gold_lens, bm25_diag, bm25_rank, cos_sim, eu_dist, man_dist, jaccard_sim, tfidf_cos
         ], axis=1)
         
-        # In original code, num_feats were standardized using StandardScaler fit on the batch.
-        # We will do a generic standardization avoiding div-by-zero.
+        # Standardize numerical features
         mean = np.mean(num_feats, axis=0)
         std = np.std(num_feats, axis=0) + 1e-8
         num_feats = (num_feats - mean) / std
         
         features = np.concatenate([s_embs, num_feats, q_type_oh], axis=1)
+        return features
+    
+    def predict_batch(self, questions, chunks):
+        """Predict confidence scores. Must be implemented by subclass."""
+        raise NotImplementedError
+    
+    def predict_single(self, question, chunk):
+        """Predict confidence score for a single (question, chunk) pair."""
+        return self.predict_batch([question], [chunk])[0]
+
+
+class RAGConfidenceScorer(BaseConfidenceScorer):
+    """MLP-based RAG confidence scorer using train_test_model.pt."""
+    
+    def __init__(self, model_path="is_RAG_able/models/train_test_model.pt",
+                 embedder_name="all-MiniLM-L6-v2", device=None):
+        super().__init__(embedder_name, device)
         
-        # Ensure exact input dimension matches model specification
-        # The model's input dim was 405 (in my prior run). If our features are slightly off due to vocab or lb, we pad or truncate.
+        final_path, possible_paths = self._resolve_model_path(model_path, 'train_test_model.pt')
+        
+        # Determine input_dim from meta or state_dict
+        input_dim = INPUT_DIM
+        state_dict_cache = None
+        
+        if final_path:
+            meta_path = final_path + ".meta.json"
+            if os.path.exists(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                    input_dim = meta.get("input_dim", INPUT_DIM)
+            else:
+                state_dict_cache = torch.load(final_path, map_location=self.device)
+                if 'fc1.weight' in state_dict_cache:
+                    input_dim = state_dict_cache['fc1.weight'].shape[1]
+        
+        self.model = MLPClassifier(input_dim=input_dim)
+        
+        if final_path:
+            if state_dict_cache is None:
+                state_dict_cache = torch.load(final_path, map_location=self.device)
+            self.model.load_state_dict(state_dict_cache)
+            self.model.to(self.device)
+            self.model.eval()
+            self.model_loaded = True
+            print(f"✅ RAGConfidenceScorer loaded from {final_path} (input_dim={input_dim})")
+        else:
+            print(f"⚠️ Warning: RAG model not found. Checked paths: {possible_paths}. Will return default scores.")
+    
+    @torch.no_grad()
+    def predict_batch(self, questions, chunks):
+        """Predict confidence scores using MLP model.
+        
+        Returns:
+            np.ndarray: Array of probabilities in [0, 1].
+        """
+        if not self.model_loaded:
+            return np.ones(len(questions)) * 0.5
+        
+        features = self._extract_features(questions, chunks)
+        
+        # Align dimension to model's expected input
         input_dim = self.model.fc1.in_features
         if features.shape[1] < input_dim:
             pad = np.zeros((features.shape[0], input_dim - features.shape[1]))
             features = np.concatenate([features, pad], axis=1)
         elif features.shape[1] > input_dim:
             features = features[:, :input_dim]
-
-        features_t = torch.tensor(features, dtype=torch.float32, device=self.device)
         
+        features_t = torch.tensor(features, dtype=torch.float32, device=self.device)
         logits = self.model(features_t)
         probs = torch.sigmoid(logits)
         
         return probs.cpu().numpy()
+
+
+class XGBConfidenceScorer(BaseConfidenceScorer):
+    """XGBoost-based RAG confidence scorer using xgb_model.pkl."""
+    
+    def __init__(self, model_path="is_RAG_able/models/xgb_model.pkl",
+                 embedder_name="all-MiniLM-L6-v2", device=None):
+        super().__init__(embedder_name, device)
+        import joblib
         
-    def predict_single(self, question: str, chunk: str) -> float:
-        """Predict confidence score for a single (question, chunk) pair."""
-        return self.predict_batch([question], [chunk])[0]
+        final_path, possible_paths = self._resolve_model_path(model_path, 'xgb_model.pkl')
+        
+        if final_path:
+            self.model = joblib.load(final_path)
+            self.model_loaded = True
+            print(f"✅ XGBConfidenceScorer loaded from {final_path}")
+        else:
+            print(f"⚠️ Warning: XGB model not found. Checked paths: {possible_paths}")
+            self.model = None
+    
+    def predict_batch(self, questions, chunks):
+        """Predict confidence scores using XGBoost model.
+        
+        Returns:
+            np.ndarray: Array of probabilities in [0, 1] for "Retrievable" class.
+        """
+        if not self.model_loaded:
+            return np.ones(len(questions)) * 0.5
+        
+        features = self._extract_features(questions, chunks)
+        
+        # Align feature dimension to match trained model
+        expected_dim = self.model.n_features_in_
+        if features.shape[1] < expected_dim:
+            pad = np.zeros((features.shape[0], expected_dim - features.shape[1]))
+            features = np.concatenate([features, pad], axis=1)
+        elif features.shape[1] > expected_dim:
+            features = features[:, :expected_dim]
+        
+        # XGBoost predict_proba → probability of "Retrievable" (class 1)
+        probs = self.model.predict_proba(features)[:, 1]
+        
+        return probs
