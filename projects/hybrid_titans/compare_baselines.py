@@ -46,7 +46,7 @@ from common.embedders import SentenceTransformerEmbedder
 from common.titan_utils import create_titan_rag
 from common.llm_utils import FlanT5Generator
 from common.text_utils import split_into_chunks
-from baselines import create_retrievers, BaseRetriever, HybridRAGV2
+from baselines import create_retrievers, BaseRetriever
 
 # Add try-except for rag_infer to fail gracefully if skipped
 try:
@@ -315,7 +315,7 @@ def _init_components():
     print("\n📦 Loading components...")
     from common.embedders import DEVICE
     embedder = SentenceTransformerEmbedder(target_dim=256, device=DEVICE)
-    llm = FlanT5Generator("google/flan-t5-xl", device=DEVICE)
+    llm = FlanT5Generator("google/flan-t5-large", device=DEVICE)
     return embedder, llm, DEVICE
 
 

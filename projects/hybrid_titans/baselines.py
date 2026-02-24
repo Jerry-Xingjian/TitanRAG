@@ -366,37 +366,39 @@ class HybridRAG(BaseRetriever):
 
 class HybridRAGV2(BaseRetriever):
     """
-    Hybrid RAG v2: Query-Time Dynamic Routing.
+    Hybrid RAG v2: Per-Chunk Soft Routing.
     
-    At retrieval time, scores each (question, chunk) pair using a RAG
-    confidence model. High-confidence chunks are retrieved via BM25+Embedding,
-    low-confidence chunks are retrieved via Titan Memory. Results are merged.
+    For each chunk, computes BOTH a RAG score (BM25 + Embedding) and a
+    Titan Memory score. Uses the RAG confidence scorer to produce a
+    per-chunk blending weight:
     
-    All chunks are digested into Titan memory (same as HybridRAG V1).
-    The routing decision happens dynamically per question.
+        final_score[i] = conf[i] * rag_score[i] + (1 - conf[i]) * titan_score[i]
+    
+    Unlike V1 (HybridRAG) which uses a single global memory confidence to
+    adjust weights for ALL chunks equally, V2 assigns each chunk its own
+    RAG-vs-Titan ratio based on the trained scorer model.
     """
     
     def __init__(self, embedder, llm_generator, titan_rag, scorer=None,
                  base_bm25_weight: float = 0.4,
                  base_embed_weight: float = 0.6,
-                 confidence_threshold: float = 0.5,
                  multihop: bool = False):
         super().__init__(embedder, llm_generator, multihop=multihop)
         self.titan_rag = titan_rag
         self.scorer = scorer
         self.bm25_weight = base_bm25_weight
         self.embed_weight = base_embed_weight
-        self.confidence_threshold = confidence_threshold
         
     def retrieve(self, question: str, documents: List[str],
                  doc_embeddings: torch.Tensor, topk: int = 5) -> Tuple[str, Dict]:
         """
-        Dynamic routing retrieval.
+        Per-chunk soft routing retrieval.
         
-        1. Score all (question, chunk) pairs
-        2. High-score chunks → BM25 + Embedding
-        3. Low-score chunks → Titan Memory
-        4. Merge & rank Top-K
+        1. Compute RAG scores (BM25 + Embedding) for ALL chunks
+        2. Compute Titan scores (Memory) for ALL chunks
+        3. Get per-chunk confidence from scorer
+        4. Blend: final = conf * rag + (1 - conf) * titan
+        5. Top-K
         """
         dim = self.embedder.target_dim
         
@@ -405,69 +407,58 @@ class HybridRAGV2(BaseRetriever):
         query_flat = query_emb.reshape(-1, dim)
         query_vec = query_flat.mean(dim=0)
         
-        # --- STEP 1: Score chunks for routability ---
+        # --- STEP 1: Per-chunk confidence from scorer ---
         if self.scorer is not None:
             questions_repeated = [question] * len(documents)
-            confidence_scores = self.scorer.predict_batch(questions_repeated, documents)
+            confidence_np = self.scorer.predict_batch(questions_repeated, documents)
+            confidence = torch.tensor(confidence_np, dtype=torch.float32,
+                                      device=doc_embeddings.device)
         else:
-            # Fallback: treat all as retrievable (degrades to PureRAG + Memory blend)
-            confidence_scores = [0.5] * len(documents)
-        
-        # --- STEP 2: Split indices by confidence ---
-        rag_indices = []
-        titan_indices = []
-        for idx, score in enumerate(confidence_scores):
-            if score >= self.confidence_threshold:
-                rag_indices.append(idx)
-            else:
-                titan_indices.append(idx)
-        
-        all_scored = []  # (score, doc_text, source_label)
+            # Fallback: equal blend (0.5 RAG + 0.5 Titan)
+            confidence = torch.full((len(documents),), 0.5,
+                                    device=doc_embeddings.device)
         
         with torch.no_grad():
-            # --- POOL 1: RAG path (BM25 + Embedding) for high-confidence chunks ---
-            if rag_indices:
-                rag_docs = [documents[i] for i in rag_indices]
-                rag_embs = doc_embeddings[rag_indices]
-                
-                bm25_scores = compute_bm25_scores(question, rag_docs)
-                embed_scores = F.cosine_similarity(query_vec.unsqueeze(0), rag_embs)
-                bm25_scores = bm25_scores.to(rag_embs.device)
-                
-                fused = (
-                    self.bm25_weight * normalize_scores(bm25_scores) +
-                    self.embed_weight * normalize_scores(embed_scores)
-                )
-                
-                for local_idx, global_idx in enumerate(rag_indices):
-                    all_scored.append((fused[local_idx].item(), documents[global_idx], "rag"))
+            # --- STEP 2: RAG scores (BM25 + Embedding) for ALL chunks ---
+            bm25_scores = compute_bm25_scores(question, documents)
+            bm25_scores = bm25_scores.to(doc_embeddings.device)
+            embed_scores = F.cosine_similarity(query_vec.unsqueeze(0), doc_embeddings)
             
-            # --- POOL 2: Titan path (Memory) for low-confidence chunks ---
-            if titan_indices:
-                titan_embs = doc_embeddings[titan_indices]
-                
-                memory_output = self.titan_rag.titan.ltm.forward_no_update(query_flat)
-                memory_vec = memory_output.mean(dim=0)
-                memory_scores = F.cosine_similarity(memory_vec.unsqueeze(0), titan_embs)
-                
-                for local_idx, global_idx in enumerate(titan_indices):
-                    all_scored.append((memory_scores[local_idx].item(), documents[global_idx], "titan"))
-        
-        # --- STEP 3: Merge & Rank ---
-        all_scored.sort(key=lambda x: x[0], reverse=True)
-        final_topk = all_scored[:topk]
+            rag_scores = (
+                self.bm25_weight * normalize_scores(bm25_scores) +
+                self.embed_weight * normalize_scores(embed_scores)
+            )
+            
+            # --- STEP 3: Titan scores (Memory) for ALL chunks ---
+            memory_output = self.titan_rag.titan.ltm.forward_no_update(query_flat)
+            memory_vec = memory_output.mean(dim=0)
+            titan_scores = F.cosine_similarity(memory_vec.unsqueeze(0), doc_embeddings)
+            
+            # --- STEP 4: Per-chunk soft fusion ---
+            final_scores = (
+                confidence * normalize_scores(rag_scores) +
+                (1 - confidence) * normalize_scores(titan_scores)
+            )
+            
+            # --- STEP 5: Top-K ---
+            topk_values, topk_indices = final_scores.topk(min(topk, len(documents)))
         
         # Build context
-        context_lines = [item[1] for item in final_topk]
+        context_lines = [documents[idx] for idx in topk_indices.tolist()]
         context = "\n\n".join(context_lines)
         
-        sources = [item[2] for item in final_topk]
+        # Per-chunk confidence stats for selected chunks
+        selected_conf = confidence[topk_indices].tolist()
+        avg_conf = confidence.mean().item()
+        
         return context, {
-            "mode": "HybridRAGV2_DynamicRouting",
-            "rag_pool_size": len(rag_indices),
-            "titan_pool_size": len(titan_indices),
-            "selected_sources": sources,
-            "threshold": self.confidence_threshold
+            "mode": "HybridRAGV2_SoftRouting",
+            "topk_indices": topk_indices.tolist(),
+            "topk_confidence": [round(c, 3) for c in selected_conf],
+            "avg_confidence": round(avg_conf, 3),
+            "rag_top1": rag_scores.argmax().item(),
+            "titan_top1": titan_scores.argmax().item(),
+            "fused_top1": final_scores.argmax().item()
         }
 
 

@@ -9,7 +9,7 @@ import torch
 class FlanT5Generator:
     """Flan-T5 based text generator."""
     
-    def __init__(self, model_name="google/flan-t5-xl", device=None):
+    def __init__(self, model_name="google/flan-t5-large", device=None):
         from transformers import T5ForConditionalGeneration, T5Tokenizer
         
         self.device = device
