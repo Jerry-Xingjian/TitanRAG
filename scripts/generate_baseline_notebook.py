@@ -348,10 +348,10 @@ def generate_notebook():
     ]
 
     if squad_exists:
-        multidoc_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
+        multidoc_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 5 --epochs 200 --verbose --save-results\n")
     else:
         multidoc_cell_source.append("# Note: SQuAD data not set up. Run cell 2.5 first.\n")
-        multidoc_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
+        multidoc_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 5 --epochs 200 --verbose --save-results\n")
 
     cells.append({
         "cell_type": "code",

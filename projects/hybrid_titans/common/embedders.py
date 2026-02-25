@@ -24,7 +24,7 @@ else:
 class SentenceTransformerEmbedder(nn.Module):
     """Semantic embedder using sentence-transformers."""
     
-    def __init__(self, model_name="all-MiniLM-L6-v2", target_dim=256, device=None):
+    def __init__(self, model_name="all-MiniLM-L6-v2", target_dim=384, device=None):
         super().__init__()
         from sentence_transformers import SentenceTransformer
         

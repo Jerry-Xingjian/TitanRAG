@@ -460,6 +460,22 @@ class AdaptiveHybridRAG(BaseRetriever):
             "titan_top1": titan_scores.argmax().item(),
             "fused_top1": final_scores.argmax().item()
         }
+    
+    def online_learn(self, question: str, expected_answer: str):
+        """Learn from Q&A pair (Online Learning).
+        
+        Updates Titan Memory with the question-answer association,
+        improving future memory-guided retrieval for similar questions.
+        """
+        dim = self.embedder.target_dim
+        
+        query_emb = self.embedder(question)
+        query_vec = query_emb.reshape(-1, dim).mean(dim=0, keepdim=True)
+        
+        answer_emb = self.embedder(expected_answer)
+        answer_vec = answer_emb.reshape(-1, dim).mean(dim=0, keepdim=True)
+        
+        self.titan_rag.titan.ltm.forward_with_update(query_vec, answer_vec)
 
 
 def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False,

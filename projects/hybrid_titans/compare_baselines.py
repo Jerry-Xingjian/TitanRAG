@@ -187,6 +187,17 @@ def evaluate_answer_quality(expected, got, embedder=None):
     return False
 
 
+def _save_titan_state(titan_rag):
+    """Snapshot Titan LTM state after digest, for later restore."""
+    import copy
+    return copy.deepcopy(titan_rag.titan.ltm.state_dict())
+
+
+def _restore_titan_state(titan_rag, saved_state):
+    """Restore Titan LTM to a previously saved state (e.g. post-digest baseline)."""
+    titan_rag.titan.ltm.load_state_dict(saved_state)
+
+
 def _compute_topk(num_chunks):
     """Dynamically compute topk based on chunk pool size.
     
@@ -242,6 +253,10 @@ def evaluate_retriever(retriever, documents, doc_embeddings, questions,
             print(f"      [{i+1}/{total}] {status} Q: {question[:50]}")
             print(f"           Exp: {expected[:40]}")
             print(f"           Got: {result['answer'][:40]}")
+        
+        # Online learning: update Titan Memory with the expected answer
+        if hasattr(retriever, 'online_learn'):
+            retriever.online_learn(question, expected)
     
     if show_progress:
         print()  # New line after progress
@@ -260,7 +275,7 @@ def run_sample_essay_mode(args):
     print("=" * 60)
 
     embedder, llm, DEVICE = _init_components()
-    titan_rag = create_titan_rag(dim=256, device=DEVICE)
+    titan_rag = create_titan_rag(dim=384, device=DEVICE)
 
     # Chunk and digest essay
     text = ESSAYS[args.essay]
@@ -278,12 +293,14 @@ def run_sample_essay_mode(args):
 
     # Create retrievers and evaluate
     retrievers = create_retrievers(embedder, llm, titan_rag, scorer=scorer)
+    saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
 
     print("\n" + "=" * 60 + "\n")
     
     results_summary = {}
     all_details = {}
     for name, retriever in retrievers.items():
+        _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
         print(f"📊 Evaluating: {name.upper()}")
         print("-" * 40)
         
@@ -314,7 +331,7 @@ def _init_components():
     """Initialize shared components (embedder, LLM). Returns (embedder, llm, DEVICE)."""
     print("\n📦 Loading components...")
     from common.embedders import DEVICE
-    embedder = SentenceTransformerEmbedder(target_dim=256, device=DEVICE)
+    embedder = SentenceTransformerEmbedder(target_dim=384, device=DEVICE)
     llm = FlanT5Generator("google/flan-t5-xl", device=DEVICE)
     return embedder, llm, DEVICE
 
@@ -511,14 +528,16 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
         # --- MEMORY AND RETRIEVERS ---
         chunk_embeddings = embedder.embed_batch(chunks)
         
-        titan_rag = create_titan_rag(dim=256)
+        titan_rag = create_titan_rag(dim=384)
         _digest_chunks(embedder, titan_rag, chunks, args.epochs, inline=True)
 
         is_multihop = dataset_name.lower() in ('hotpotqa',)
         retrievers = create_retrievers(embedder, llm, titan_rag, multihop=is_multihop, scorer=scorer)
+        saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
 
         # --- EVALUATE ALL ---
         for name, retriever in retrievers.items():
+            _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
             print(f"   [{name}] Evaluating...", end="", flush=True)
             accuracy, results = evaluate_retriever(
                 retriever, chunks, chunk_embeddings, title_questions,
@@ -608,11 +627,12 @@ def run_multidoc_mode(args):
     all_embeddings = embedder.embed_batch(all_chunks)
 
     # Shared Titan memory
-    titan_rag = create_titan_rag(dim=256, device=DEVICE)
+    titan_rag = create_titan_rag(dim=384, device=DEVICE)
     _digest_chunks(embedder, titan_rag, all_chunks, args.epochs, inline=False)
 
     # Create retrievers
     retrievers = create_retrievers(embedder, llm, titan_rag)
+    saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
 
     # Evaluate
     print("\n" + "=" * 60)
@@ -630,6 +650,7 @@ def run_multidoc_mode(args):
     results_summary = {}
     multidoc_details = {}  # {retriever: [{title, question, expected, answer, correct, mode}]}
     for name, retriever in retrievers.items():
+        _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
         print(f"\n📊 Evaluating: {name.upper()}")
         print("-" * 40)
         accuracy, results = evaluate_retriever(
