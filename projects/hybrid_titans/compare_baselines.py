@@ -315,7 +315,7 @@ def _init_components():
     print("\n📦 Loading components...")
     from common.embedders import DEVICE
     embedder = SentenceTransformerEmbedder(target_dim=256, device=DEVICE)
-    llm = FlanT5Generator("google/flan-t5-large", device=DEVICE)
+    llm = FlanT5Generator("google/flan-t5-xl", device=DEVICE)
     return embedder, llm, DEVICE
 
 
