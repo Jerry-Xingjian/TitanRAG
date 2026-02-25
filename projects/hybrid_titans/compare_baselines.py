@@ -457,7 +457,7 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
     and all retrievers are evaluated per-title.
     """
     print("=" * 60)
-    print("BASELINE COMPARISON: PureRAG vs TitanOnly vs HybridRAG vs HybridRAGV2")
+    print("BASELINE COMPARISON: PureRAG vs TitanOnly vs HybridRAG vs AdaptiveHybridRAG")
     print(f"Mode: {dataset_name} ({args.titles} titles)")
     print("=" * 60)
 
@@ -483,7 +483,7 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
         "pure_rag": {"correct": 0, "total": 0},
         "titan_only": {"correct": 0, "total": 0},
         "hybrid": {"correct": 0, "total": 0},
-        "hybrid_v2": {"correct": 0, "total": 0}
+        "adaptive": {"correct": 0, "total": 0}
     }
     all_details = {name: {} for name in all_results}  # {retriever: {title: [results]}}
 

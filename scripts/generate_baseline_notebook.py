@@ -74,13 +74,13 @@ def generate_notebook():
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "# Baseline Comparison: PureRAG vs TitanOnly vs HybridRAG vs HybridRAGV2\n",
+            "# Baseline Comparison: PureRAG vs TitanOnly vs HybridRAG vs AdaptiveHybridRAG\n",
             "\n",
             "This notebook compares retrieval strategies:\n",
             "- **PureRAG**: BM25 + Embedding (no Memory)\n",
             "- **TitanOnly**: Memory-guided retrieval only\n", 
             "- **HybridRAG**: BM25 + Memory + Embedding fusion\n",
-            "- **HybridRAGV2**: Per-Chunk Soft Routing (XGBoost scorer)\n",
+            "- **AdaptiveHybridRAG**: Per-Chunk Soft Routing (XGBoost scorer)\n",
             "\n",
             "### Modes:\n",
             "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
@@ -171,7 +171,7 @@ def generate_notebook():
         "cell_type": "markdown",
         "metadata": {},
         "source": ["## 2.1 Setup XGBoost Scorer Model\n",
-                   "The XGBoost scorer model is used by HybridRAGV2 for per-chunk soft routing.\n",
+                   "The XGBoost scorer model is used by AdaptiveHybridRAG for per-chunk soft routing.\n",
                    "It predicts how likely a (question, chunk) pair is retrievable by traditional RAG."]
     })
     

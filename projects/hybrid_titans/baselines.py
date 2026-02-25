@@ -5,7 +5,7 @@ Three modes:
 - PureRAG: BM25 + Embedding (no Memory)
 - TitanOnly: Memory-guided retrieval only
 - HybridRAG: BM25 + Memory + Embedding fusion
-- HybridRAGV2: Split Top-K retrieval (Retrievable vs Non-Retrievable pools)
+- AdaptiveHybridRAG: Per-chunk soft routing (scorer-guided RAG/Titan blending)
 """
 
 import torch
@@ -364,7 +364,7 @@ class HybridRAG(BaseRetriever):
         self.titan_rag.titan.ltm.forward_with_update(query_vec, answer_vec)
 
 
-class HybridRAGV2(BaseRetriever):
+class AdaptiveHybridRAG(BaseRetriever):
     """
     Hybrid RAG v2: Per-Chunk Soft Routing.
     
@@ -452,7 +452,7 @@ class HybridRAGV2(BaseRetriever):
         avg_conf = confidence.mean().item()
         
         return context, {
-            "mode": "HybridRAGV2_SoftRouting",
+            "mode": "AdaptiveHybridRAG",
             "topk_indices": topk_indices.tolist(),
             "topk_confidence": [round(c, 3) for c in selected_conf],
             "avg_confidence": round(avg_conf, 3),
@@ -472,7 +472,7 @@ def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False,
         llm_generator: FlanT5Generator instance
         titan_rag: TitanRAG instance (required for TitanOnly and HybridRAG)
         multihop: If True, use multi-hop reasoning prompt (for HotpotQA)
-        scorer: RAGConfidenceScorer instance (optional, for HybridRAGV2)
+        scorer: RAGConfidenceScorer instance (optional, for AdaptiveHybridRAG)
     
     Returns:
         dict: retriever name -> retriever instance
@@ -484,7 +484,7 @@ def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False,
     if titan_rag is not None:
         retrievers["titan_only"] = TitanOnly(embedder, llm_generator, titan_rag, multihop=multihop)
         retrievers["hybrid"] = HybridRAG(embedder, llm_generator, titan_rag, multihop=multihop)
-        retrievers["hybrid_v2"] = HybridRAGV2(embedder, llm_generator, titan_rag,
+        retrievers["adaptive"] = AdaptiveHybridRAG(embedder, llm_generator, titan_rag,
                                                scorer=scorer, multihop=multihop)
     
     return retrievers
