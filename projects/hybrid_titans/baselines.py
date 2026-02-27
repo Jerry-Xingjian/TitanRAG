@@ -502,5 +502,4 @@ def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False,
         retrievers["hybrid"] = HybridRAG(embedder, llm_generator, titan_rag, multihop=multihop)
         retrievers["adaptive"] = AdaptiveHybridRAG(embedder, llm_generator, titan_rag,
                                                scorer=scorer, multihop=multihop)
-    
     return retrievers
