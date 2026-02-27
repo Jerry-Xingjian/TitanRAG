@@ -1,0 +1,154 @@
+{
+  "dataset": "multidoc_squad",
+  "timestamp": "2026-02-27T10:55:00+08:00",
+  "config": {
+    "titles": 15,
+    "max_questions": 5,
+    "epochs": 200,
+    "topk": "dynamic",
+    "llm": "google/flan-t5-xl",
+    "embedder": "all-MiniLM-L6-v2",
+    "arch": "MAG",
+    "chunks": 3103,
+    "total_questions": 75
+  },
+  "selected_titles": [
+    "Energy",
+    "Universal_Studios",
+    "American_Idol",
+    "Greeks",
+    "Federal_Bureau_of_Investigation",
+    "Federal_Aviation_Administration",
+    "Orthodox_Judaism",
+    "Political_corruption",
+    "Bacteria",
+    "BeiDou_Navigation_Satellite_System",
+    "Canadian_football",
+    "Tibet",
+    "Pub",
+    "Labour_Party_(UK)",
+    "Somerset"
+  ],
+  "summary": {
+    "pure_rag": {
+      "accuracy": 78.7,
+      "em": 48.0,
+      "f1": 66.2,
+      "correct": 59,
+      "total": 75
+    },
+    "titan_only": {
+      "accuracy": 80.0,
+      "em": 38.7,
+      "f1": 60.8,
+      "correct": 60,
+      "total": 75
+    },
+    "hybrid": {
+      "accuracy": 80.0,
+      "em": 46.7,
+      "f1": 64.3,
+      "correct": 60,
+      "total": 75
+    },
+    "adaptive": {
+      "accuracy": 81.3,
+      "em": 44.0,
+      "f1": 63.4,
+      "correct": 61,
+      "total": 75
+    }
+  },
+  "per_title": {
+    "Energy": {
+      "pure_rag": 60.0,
+      "titan_only": 60.0,
+      "hybrid": 60.0,
+      "adaptive": 60.0
+    },
+    "Universal_Studios": {
+      "pure_rag": 100.0,
+      "titan_only": 100.0,
+      "hybrid": 100.0,
+      "adaptive": 100.0
+    },
+    "American_Idol": {
+      "pure_rag": 100.0,
+      "titan_only": 80.0,
+      "hybrid": 100.0,
+      "adaptive": 100.0
+    },
+    "Greeks": {
+      "pure_rag": 20.0,
+      "titan_only": 60.0,
+      "hybrid": 40.0,
+      "adaptive": 60.0
+    },
+    "Federal_Bureau_of_Investigation": {
+      "pure_rag": 100.0,
+      "titan_only": 100.0,
+      "hybrid": 100.0,
+      "adaptive": 100.0
+    },
+    "Federal_Aviation_Administration": {
+      "pure_rag": 100.0,
+      "titan_only": 100.0,
+      "hybrid": 100.0,
+      "adaptive": 100.0
+    },
+    "Orthodox_Judaism": {
+      "pure_rag": 60.0,
+      "titan_only": 60.0,
+      "hybrid": 60.0,
+      "adaptive": 60.0
+    },
+    "Political_corruption": {
+      "pure_rag": 100.0,
+      "titan_only": 80.0,
+      "hybrid": 80.0,
+      "adaptive": 80.0
+    },
+    "Bacteria": {
+      "pure_rag": 60.0,
+      "titan_only": 60.0,
+      "hybrid": 60.0,
+      "adaptive": 60.0
+    },
+    "BeiDou_Navigation_Satellite_System": {
+      "pure_rag": 60.0,
+      "titan_only": 60.0,
+      "hybrid": 80.0,
+      "adaptive": 80.0
+    },
+    "Canadian_football": {
+      "pure_rag": 80.0,
+      "titan_only": 100.0,
+      "hybrid": 80.0,
+      "adaptive": 80.0
+    },
+    "Tibet": {
+      "pure_rag": 100.0,
+      "titan_only": 80.0,
+      "hybrid": 100.0,
+      "adaptive": 80.0
+    },
+    "Pub": {
+      "pure_rag": 80.0,
+      "titan_only": 80.0,
+      "hybrid": 80.0,
+      "adaptive": 80.0
+    },
+    "Labour_Party_(UK)": {
+      "pure_rag": 80.0,
+      "titan_only": 80.0,
+      "hybrid": 80.0,
+      "adaptive": 80.0
+    },
+    "Somerset": {
+      "pure_rag": 80.0,
+      "titan_only": 100.0,
+      "hybrid": 80.0,
+      "adaptive": 100.0
+    }
+  }
+}

@@ -54,6 +54,7 @@ def generate_notebook():
     titan_utils_b64 = get_b64_safe("projects/hybrid_titans/common/titan_utils.py")
     llm_utils_b64 = get_b64_safe("projects/hybrid_titans/common/llm_utils.py")
     text_utils_b64 = get_b64_safe("projects/hybrid_titans/common/text_utils.py")
+    eval_utils_b64 = get_b64_safe("projects/hybrid_titans/common/eval_utils.py")
     baselines_b64 = get_b64_safe("projects/hybrid_titans/baselines.py")
     compare_b64 = get_b64_safe("projects/hybrid_titans/compare_baselines.py")
     essays_b64 = get_b64_safe("data/sample_essays.py")
@@ -138,6 +139,7 @@ def generate_notebook():
         f"    'projects/hybrid_titans/common/titan_utils.py': '{titan_utils_b64}',\n",
         f"    'projects/hybrid_titans/common/llm_utils.py': '{llm_utils_b64}',\n",
         f"    'projects/hybrid_titans/common/text_utils.py': '{text_utils_b64}',\n",
+        f"    'projects/hybrid_titans/common/eval_utils.py': '{eval_utils_b64}',\n",
         f"    'projects/hybrid_titans/baselines.py': '{baselines_b64}',\n",
         f"    'projects/hybrid_titans/compare_baselines.py': '{compare_b64}'\n"
     ]
