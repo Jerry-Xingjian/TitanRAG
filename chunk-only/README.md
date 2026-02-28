@@ -1,10 +1,12 @@
 模型功能：判断titanrag经过digest之后的chunk是否是ragable的
 
 数据处理：
-采用squad2.0数据集，先用generate_chunk_feature_label_sq.py处理得到chunk_feature_label.json，再用balance_chunk_feature_label.py处理得到平衡数据集chunk_feature_label_balanced.json
+采用squad2.0数据集，先用generate_chunk_feature_label_sq.py处理得到chunk_feature_label.json，再用balance_chunk_feature_label.py处理得到平衡数据集chunk_feature_label_balanced.json最终供训练使用
 
 模型训练：
 1. 快速脚本，train_chunk_retrievable_model_fast.py
    结果保存为chunk_retrievable_lgbm_report.txt
 2. 强化脚本，train_chunk_retrievable_model.py
    结果保存为chunk_retrievable_report.txt（未完成）
+
+训练经过权重分配，优先保证不丢失信息(有效信息记忆率77%),优化记忆46%(减少无效记忆)
