@@ -1,0 +1,10 @@
+Train Accuracy: 0.6988
+Test Accuracy: 0.6220
+              precision    recall  f1-score   support
+
+           0     0.5929    0.7784    0.6731     14686
+           1     0.6775    0.4656    0.5519     14685
+
+    accuracy                         0.6220     29371
+   macro avg     0.6352    0.6220    0.6125     29371
+weighted avg     0.6352    0.6220    0.6125     29371
