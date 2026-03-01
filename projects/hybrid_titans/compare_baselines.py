@@ -22,6 +22,8 @@ Usage:
 """
 
 import argparse
+from typing import List, Dict, Tuple
+import torch
 import sys
 import os
 import re
@@ -44,7 +46,15 @@ from common.embedders import SentenceTransformerEmbedder
 from common.titan_utils import create_titan_rag
 from common.llm_utils import FlanT5Generator
 from common.text_utils import split_into_chunks
-from baselines import create_retrievers
+from common.eval_utils import compute_em, compute_f1
+from baselines import create_retrievers, BaseRetriever
+
+# Add try-except for rag_infer to fail gracefully if skipped
+try:
+    from is_RAG_able.rag_infer import XGBConfidenceScorer
+except ImportError:
+    XGBConfidenceScorer = None
+    print("Warning: XGBConfidenceScorer not found. Hybrid_v2 may not work.")
 
 
 # Import essays from data directory
@@ -178,6 +188,17 @@ def evaluate_answer_quality(expected, got, embedder=None):
     return False
 
 
+def _save_titan_state(titan_rag):
+    """Snapshot Titan LTM state after digest, for later restore."""
+    import copy
+    return copy.deepcopy(titan_rag.titan.ltm.state_dict())
+
+
+def _restore_titan_state(titan_rag, saved_state):
+    """Restore Titan LTM to a previously saved state (e.g. post-digest baseline)."""
+    titan_rag.titan.ltm.load_state_dict(saved_state)
+
+
 def _compute_topk(num_chunks):
     """Dynamically compute topk based on chunk pool size.
     
@@ -195,9 +216,17 @@ def _compute_topk(num_chunks):
 def evaluate_retriever(retriever, documents, doc_embeddings, questions,
                        verbose=True, show_progress=False, embedder=None,
                        topk=None):
-    """Evaluate a retriever on a set of questions."""
+    """Evaluate a retriever on a set of questions.
+    
+    Returns:
+        tuple: (metrics_dict, results_list)
+            metrics_dict: {"accuracy": float, "em": float, "f1": float}
+            results_list: list of per-question result dicts
+    """
     correct = 0
     total = len(questions)
+    em_sum = 0.0
+    f1_sum = 0.0
     
     # Dynamic topk if not specified
     if topk is None or topk <= 0:
@@ -208,15 +237,23 @@ def evaluate_retriever(retriever, documents, doc_embeddings, questions,
     
     for i, (question, expected) in enumerate(questions):
         result = retriever.answer(question, documents, doc_embeddings, topk=topk)
-        is_correct = evaluate_answer_quality(expected, result["answer"], embedder=embedder)
+        answer = result["answer"]
+        is_correct = evaluate_answer_quality(expected, answer, embedder=embedder)
+        em = compute_em(expected, answer)
+        f1 = compute_f1(expected, answer)
+        
         if is_correct:
             correct += 1
+        em_sum += em
+        f1_sum += f1
         
         results.append({
             "question": question,
             "expected": expected,
-            "answer": result["answer"],
+            "answer": answer,
             "correct": is_correct,
+            "em": em,
+            "f1": round(f1, 3),
             "mode": result["mode"]
         })
         
@@ -232,13 +269,21 @@ def evaluate_retriever(retriever, documents, doc_embeddings, questions,
             status = "ok" if is_correct else "X"
             print(f"      [{i+1}/{total}] {status} Q: {question[:50]}")
             print(f"           Exp: {expected[:40]}")
-            print(f"           Got: {result['answer'][:40]}")
+            print(f"           Got: {answer[:40]}")
+        
+        # Online learning: update Titan Memory with the expected answer
+        if hasattr(retriever, 'online_learn'):
+            retriever.online_learn(question, expected)
     
     if show_progress:
         print()  # New line after progress
     
-    accuracy = correct / total * 100 if total > 0 else 0
-    return accuracy, results
+    metrics = {
+        "accuracy": correct / total * 100 if total > 0 else 0,
+        "em": em_sum / total * 100 if total > 0 else 0,
+        "f1": f1_sum / total * 100 if total > 0 else 0,
+    }
+    return metrics, results
 
 
 def run_sample_essay_mode(args):
@@ -251,7 +296,7 @@ def run_sample_essay_mode(args):
     print("=" * 60)
 
     embedder, llm, DEVICE = _init_components()
-    titan_rag = create_titan_rag(dim=256, device=DEVICE)
+    titan_rag = create_titan_rag(dim=384, device=DEVICE)
 
     # Chunk and digest essay
     text = ESSAYS[args.essay]
@@ -262,20 +307,33 @@ def run_sample_essay_mode(args):
     chunk_embeddings = embedder.embed_batch(chunks)
     _digest_chunks(embedder, titan_rag, chunks, args.epochs, inline=False)
 
-    # Create retrievers and evaluate
-    retrievers = create_retrievers(embedder, llm, titan_rag)
+    # Init Scorer
+    scorer = None
+    if XGBConfidenceScorer:
+        scorer = XGBConfidenceScorer(device=DEVICE)
 
-    print("\n" + "=" * 60)
+    # Create retrievers and evaluate
+    retrievers = create_retrievers(embedder, llm, titan_rag, scorer=scorer)
+    saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
+
+    print("\n" + "=" * 60 + "\n")
+    
     results_summary = {}
     all_details = {}
     for name, retriever in retrievers.items():
-        print(f"\n📊 Evaluating: {name.upper()}")
+        _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
+        print(f"📊 Evaluating: {name.upper()}")
         print("-" * 40)
-        accuracy, results = evaluate_retriever(retriever, chunks, chunk_embeddings, questions,
-                                               embedder=embedder, topk=args.topk)
-        results_summary[name] = accuracy
+        
+        metrics, results = evaluate_retriever(
+            retriever, chunks, chunk_embeddings, questions,
+            verbose=True, show_progress=False,
+            embedder=embedder, topk=args.topk
+        )
+            
+        results_summary[name] = metrics
         all_details[name] = results
-        print(f"\n   Accuracy: {accuracy:.1f}%")
+        print(f"\n   Acc: {metrics['accuracy']:.1f}%  EM: {metrics['em']:.1f}%  F1: {metrics['f1']:.1f}%")
 
     # Summary
     print("\n" + "=" * 60)
@@ -294,7 +352,7 @@ def _init_components():
     """Initialize shared components (embedder, LLM). Returns (embedder, llm, DEVICE)."""
     print("\n📦 Loading components...")
     from common.embedders import DEVICE
-    embedder = SentenceTransformerEmbedder(target_dim=256, device=DEVICE)
+    embedder = SentenceTransformerEmbedder(target_dim=384, device=DEVICE)
     llm = FlanT5Generator("google/flan-t5-xl", device=DEVICE)
     return embedder, llm, DEVICE
 
@@ -363,19 +421,33 @@ def _digest_chunks(embedder, titan_rag, chunks, epochs, inline=False):
 
 
 def _print_summary_bar(results_dict, show_counts=True):
-    """Print a bar-chart summary of retriever results."""
+    """Print a bar-chart summary of retriever results with Acc/EM/F1."""
     for name, stats in results_dict.items():
-        if isinstance(stats, dict) and stats.get("total", 0) > 0:
+        if isinstance(stats, dict) and "accuracy" in stats:
+            # New metrics format: {accuracy, em, f1, ...}
+            acc = stats["accuracy"]
+            em = stats.get("em", 0)
+            f1 = stats.get("f1", 0)
+            bar = "█" * int(acc / 10) + "░" * (10 - int(acc / 10))
+            counts = ""
+            if show_counts and "correct" in stats and "total" in stats:
+                counts = f" ({stats['correct']}/{stats['total']})"
+            print(f"  {name:12s}: {bar} Acc {acc:5.1f}%  EM {em:5.1f}%  F1 {f1:5.1f}%{counts}")
+        elif isinstance(stats, dict) and stats.get("total", 0) > 0:
+            # Legacy format: {correct, total} with optional em_sum/f1_sum
             accuracy = stats["correct"] / stats["total"] * 100
+            em = stats.get("em_sum", 0) / stats["total"] * 100 if "em_sum" in stats else 0
+            f1 = stats.get("f1_sum", 0) / stats["total"] * 100 if "f1_sum" in stats else 0
             bar = "█" * int(accuracy / 10) + "░" * (10 - int(accuracy / 10))
-            if show_counts:
-                print(f"  {name:12s}: {bar} {accuracy:.1f}% ({stats['correct']}/{stats['total']})")
+            counts = f" ({stats['correct']}/{stats['total']})" if show_counts else ""
+            if em > 0 or f1 > 0:
+                print(f"  {name:12s}: {bar} Acc {accuracy:5.1f}%  EM {em:5.1f}%  F1 {f1:5.1f}%{counts}")
             else:
-                print(f"  {name:12s}: {bar} {accuracy:.1f}%")
+                print(f"  {name:12s}: {bar} Acc {accuracy:5.1f}%{counts}")
         elif isinstance(stats, (int, float)):
             accuracy = stats
             bar = "█" * int(accuracy / 10) + "░" * (10 - int(accuracy / 10))
-            print(f"  {name:12s}: {bar} {accuracy:.1f}%")
+            print(f"  {name:12s}: {bar} Acc {accuracy:5.1f}%")
 
 
 def _save_results(dataset_name, config, summary, details=None):
@@ -400,14 +472,23 @@ def _save_results(dataset_name, config, summary, details=None):
     except ValueError:
         rel_path = os.path.join(eval_dir, filename)
 
-    # Normalize summary to {name: {accuracy, correct, total}}
+    # Normalize summary to {name: {accuracy, em, f1, correct, total}}
     norm_summary = {}
     for name, stats in summary.items():
-        if isinstance(stats, dict) and "total" in stats:
+        if isinstance(stats, dict) and "accuracy" in stats:
+            # New metrics format from evaluate_retriever
+            norm_summary[name] = {
+                "accuracy": round(stats["accuracy"], 1),
+                "em": round(stats.get("em", 0), 1),
+                "f1": round(stats.get("f1", 0), 1),
+            }
+        elif isinstance(stats, dict) and "total" in stats:
             total = stats["total"]
             correct = stats["correct"]
             norm_summary[name] = {
                 "accuracy": round(correct / total * 100, 1) if total > 0 else 0,
+                "em": round(stats.get("em_sum", 0) / total * 100, 1) if total > 0 and "em_sum" in stats else 0,
+                "f1": round(stats.get("f1_sum", 0) / total * 100, 1) if total > 0 and "f1_sum" in stats else 0,
                 "correct": correct, "total": total
             }
         elif isinstance(stats, (int, float)):
@@ -428,19 +509,25 @@ def _save_results(dataset_name, config, summary, details=None):
     print(f"\n💾 Results saved to: {rel_path}")
 
 
+
 def run_dataset_mode(args, contexts, questions, dataset_name):
     """
     Shared evaluation logic for dataset-based modes (SQuAD, HotpotQA, etc.).
     
     Each title gets its own Titan memory, chunks are digested independently,
-    and all three retrievers are evaluated per-title.
+    and all retrievers are evaluated per-title.
     """
     print("=" * 60)
-    print("BASELINE COMPARISON: PureRAG vs TitanOnly vs HybridRAG")
+    print("BASELINE COMPARISON: PureRAG vs TitanOnly vs HybridRAG vs AdaptiveHybridRAG")
     print(f"Mode: {dataset_name} ({args.titles} titles)")
     print("=" * 60)
 
     embedder, llm, DEVICE = _init_components()
+    
+    # Init Scorer
+    scorer = None
+    if XGBConfidenceScorer:
+        scorer = XGBConfidenceScorer(device=DEVICE)
 
     # Select titles to evaluate
     all_titles = list(contexts.keys())
@@ -456,7 +543,8 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
     all_results = {
         "pure_rag": {"correct": 0, "total": 0},
         "titan_only": {"correct": 0, "total": 0},
-        "hybrid": {"correct": 0, "total": 0}
+        "hybrid": {"correct": 0, "total": 0},
+        "adaptive": {"correct": 0, "total": 0}
     }
     all_details = {name: {} for name in all_results}  # {retriever: {title: [results]}}
 
@@ -478,19 +566,24 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
         print(f"   Context length: {len(context)} chars")
         print(f"   Questions: {len(title_questions)}")
 
-        titan_rag = create_titan_rag(dim=256)
         chunks = _chunk_context(context)
         print(f"   Chunks: {len(chunks)}")
-
+        
+        # --- MEMORY AND RETRIEVERS ---
         chunk_embeddings = embedder.embed_batch(chunks)
+        
+        titan_rag = create_titan_rag(dim=384)
         _digest_chunks(embedder, titan_rag, chunks, args.epochs, inline=True)
 
         is_multihop = dataset_name.lower() in ('hotpotqa',)
-        retrievers = create_retrievers(embedder, llm, titan_rag, multihop=is_multihop)
+        retrievers = create_retrievers(embedder, llm, titan_rag, multihop=is_multihop, scorer=scorer)
+        saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
 
+        # --- EVALUATE ALL ---
         for name, retriever in retrievers.items():
+            _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
             print(f"   [{name}] Evaluating...", end="", flush=True)
-            accuracy, results = evaluate_retriever(
+            metrics, results = evaluate_retriever(
                 retriever, chunks, chunk_embeddings, title_questions,
                 verbose=args.verbose, show_progress=not args.verbose,
                 embedder=embedder, topk=args.topk
@@ -499,9 +592,13 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
             correct_count = sum(1 for r in results if r["correct"])
             all_results[name]["correct"] += correct_count
             all_results[name]["total"] += len(title_questions)
+            all_results[name].setdefault("em_sum", 0.0)
+            all_results[name].setdefault("f1_sum", 0.0)
+            all_results[name]["em_sum"] += sum(r["em"] for r in results)
+            all_results[name]["f1_sum"] += sum(r["f1"] for r in results)
             all_details[name][title] = results
 
-            print(f" {correct_count}/{len(title_questions)} ({accuracy:.1f}%)")
+            print(f" {correct_count}/{len(title_questions)} ({metrics['accuracy']:.1f}%)")
 
     print("\n" + "=" * 60)
     print(f"FINAL SUMMARY ({dataset_name})")
@@ -578,11 +675,12 @@ def run_multidoc_mode(args):
     all_embeddings = embedder.embed_batch(all_chunks)
 
     # Shared Titan memory
-    titan_rag = create_titan_rag(dim=256, device=DEVICE)
+    titan_rag = create_titan_rag(dim=384, device=DEVICE)
     _digest_chunks(embedder, titan_rag, all_chunks, args.epochs, inline=False)
 
     # Create retrievers
     retrievers = create_retrievers(embedder, llm, titan_rag)
+    saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
 
     # Evaluate
     print("\n" + "=" * 60)
@@ -600,14 +698,15 @@ def run_multidoc_mode(args):
     results_summary = {}
     multidoc_details = {}  # {retriever: [{title, question, expected, answer, correct, mode}]}
     for name, retriever in retrievers.items():
+        _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
         print(f"\n📊 Evaluating: {name.upper()}")
         print("-" * 40)
-        accuracy, results = evaluate_retriever(
+        metrics, results = evaluate_retriever(
             retriever, all_chunks, all_embeddings, eval_questions,
             verbose=args.verbose, show_progress=not args.verbose,
             embedder=embedder, topk=args.topk
         )
-        results_summary[name] = accuracy
+        results_summary[name] = metrics
 
         # Annotate results with source title
         annotated = []
@@ -618,7 +717,7 @@ def run_multidoc_mode(args):
             title_results[name][title].append(results[idx]["correct"])
         multidoc_details[name] = annotated
 
-        print(f"   Overall Accuracy: {accuracy:.1f}%")
+        print(f"   Acc: {metrics['accuracy']:.1f}%  EM: {metrics['em']:.1f}%  F1: {metrics['f1']:.1f}%")
 
     # Summary
     print("\n" + "=" * 60)

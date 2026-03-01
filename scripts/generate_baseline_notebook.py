@@ -54,10 +54,14 @@ def generate_notebook():
     titan_utils_b64 = get_b64_safe("projects/hybrid_titans/common/titan_utils.py")
     llm_utils_b64 = get_b64_safe("projects/hybrid_titans/common/llm_utils.py")
     text_utils_b64 = get_b64_safe("projects/hybrid_titans/common/text_utils.py")
+    eval_utils_b64 = get_b64_safe("projects/hybrid_titans/common/eval_utils.py")
     baselines_b64 = get_b64_safe("projects/hybrid_titans/baselines.py")
     compare_b64 = get_b64_safe("projects/hybrid_titans/compare_baselines.py")
     essays_b64 = get_b64_safe("data/sample_essays.py")
     init_b64 = base64.b64encode(b"# Common modules").decode("utf-8")
+    
+    rag_infer_b64 = get_b64_optional("is_RAG_able/rag_infer.py")
+    init_empty_b64 = base64.b64encode(b"").decode("utf-8")
     
     # Check if processed_squad.py exists (but don't embed it - too large!)
     squad_exists = os.path.exists("data/processed_squad.py") or os.path.exists("../data/processed_squad.py")
@@ -71,12 +75,13 @@ def generate_notebook():
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "# Baseline Comparison: PureRAG vs TitanOnly vs HybridRAG\n",
+            "# Baseline Comparison: PureRAG vs TitanOnly vs HybridRAG vs AdaptiveHybridRAG\n",
             "\n",
-            "This notebook compares three retrieval strategies:\n",
+            "This notebook compares retrieval strategies:\n",
             "- **PureRAG**: BM25 + Embedding (no Memory)\n",
             "- **TitanOnly**: Memory-guided retrieval only\n", 
             "- **HybridRAG**: BM25 + Memory + Embedding fusion\n",
+            "- **AdaptiveHybridRAG**: Per-Chunk Soft Routing (XGBoost scorer)\n",
             "\n",
             "### Modes:\n",
             "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
@@ -99,7 +104,7 @@ def generate_notebook():
         "outputs": [],
         "source": [
             "# Install required packages\n",
-            "!pip install -q torch sentence-transformers transformers tqdm"
+            "!pip install -q torch sentence-transformers transformers tqdm scikit-learn xgboost joblib"
         ]
     })
     
@@ -134,8 +139,16 @@ def generate_notebook():
         f"    'projects/hybrid_titans/common/titan_utils.py': '{titan_utils_b64}',\n",
         f"    'projects/hybrid_titans/common/llm_utils.py': '{llm_utils_b64}',\n",
         f"    'projects/hybrid_titans/common/text_utils.py': '{text_utils_b64}',\n",
+        f"    'projects/hybrid_titans/common/eval_utils.py': '{eval_utils_b64}',\n",
         f"    'projects/hybrid_titans/baselines.py': '{baselines_b64}',\n",
-        f"    'projects/hybrid_titans/compare_baselines.py': '{compare_b64}'\n",
+        f"    'projects/hybrid_titans/compare_baselines.py': '{compare_b64}'\n"
+    ]
+    
+    if rag_infer_b64:
+        setup_code.append(f"    ,'is_RAG_able/rag_infer.py': '{rag_infer_b64}'\n")
+        setup_code.append(f"    ,'is_RAG_able/__init__.py': '{init_empty_b64}'\n")
+        
+    setup_code.extend([
         "}\n",
         "\n",
         "print(f'Setting up {len(files)} core files...')\n",
@@ -143,7 +156,7 @@ def generate_notebook():
         "    write_file(path, content)\n",
         "\n",
         "print('\\n✅ Core files ready!')\n"
-    ]
+    ])
     
     cells.append({
         "cell_type": "code",
@@ -151,6 +164,55 @@ def generate_notebook():
         "metadata": {},
         "outputs": [],
         "source": setup_code
+    })
+    
+    # ===== Cell 3.1: Setup XGBoost Scorer Model =====
+    xgb_model_b64 = get_b64_optional("is_RAG_able/models/xgb_model.pkl")
+    
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": ["## 2.1 Setup XGBoost Scorer Model\n",
+                   "The XGBoost scorer model is used by AdaptiveHybridRAG for per-chunk soft routing.\n",
+                   "It predicts how likely a (question, chunk) pair is retrievable by traditional RAG."]
+    })
+    
+    if xgb_model_b64:
+        xgb_setup_source = [
+            "import os, base64\n",
+            "\n",
+            "model_dir = 'is_RAG_able/models'\n",
+            "model_path = os.path.join(model_dir, 'xgb_model.pkl')\n",
+            "os.makedirs(model_dir, exist_ok=True)\n",
+            "\n",
+            f"xgb_b64 = '{xgb_model_b64}'\n",
+            "with open(model_path, 'wb') as f:\n",
+            "    f.write(base64.b64decode(xgb_b64))\n",
+            "size_mb = os.path.getsize(model_path) / (1024 * 1024)\n",
+            "print(f'✅ XGBoost model written: {model_path} ({size_mb:.1f} MB)')\n"
+        ]
+    else:
+        xgb_setup_source = [
+            "import os\n",
+            "\n",
+            "model_dir = 'is_RAG_able/models'\n",
+            "model_path = os.path.join(model_dir, 'xgb_model.pkl')\n",
+            "os.makedirs(model_dir, exist_ok=True)\n",
+            "\n",
+            "if not os.path.exists(model_path):\n",
+            "    print(f'⚠️ XGBoost model not found at {model_path}')\n",
+            "    print('Please upload xgb_model.pkl to the colab filesystem at that path.')\n",
+            "else:\n",
+            "    size_mb = os.path.getsize(model_path) / (1024 * 1024)\n",
+            "    print(f'✅ Found model: {model_path} ({size_mb:.1f} MB)')\n"
+        ]
+    
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": xgb_setup_source
     })
     
     # ===== Cell 3.5: Setup SQuAD Data (auto-generate) =====
@@ -288,10 +350,10 @@ def generate_notebook():
     ]
 
     if squad_exists:
-        multidoc_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
+        multidoc_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 5 --epochs 200 --verbose --save-results\n")
     else:
         multidoc_cell_source.append("# Note: SQuAD data not set up. Run cell 2.5 first.\n")
-        multidoc_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 50 --epochs 200 --verbose --save-results\n")
+        multidoc_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 5 --max-questions 5 --epochs 200 --verbose --save-results\n")
 
     cells.append({
         "cell_type": "code",

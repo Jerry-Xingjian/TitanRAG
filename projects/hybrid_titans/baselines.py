@@ -5,6 +5,7 @@ Three modes:
 - PureRAG: BM25 + Embedding (no Memory)
 - TitanOnly: Memory-guided retrieval only
 - HybridRAG: BM25 + Memory + Embedding fusion
+- AdaptiveHybridRAG: Per-chunk soft routing (scorer-guided RAG/Titan blending)
 """
 
 import torch
@@ -363,7 +364,122 @@ class HybridRAG(BaseRetriever):
         self.titan_rag.titan.ltm.forward_with_update(query_vec, answer_vec)
 
 
-def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -> Dict[str, BaseRetriever]:
+class AdaptiveHybridRAG(BaseRetriever):
+    """
+    Hybrid RAG v2: Per-Chunk Soft Routing.
+    
+    For each chunk, computes BOTH a RAG score (BM25 + Embedding) and a
+    Titan Memory score. Uses the RAG confidence scorer to produce a
+    per-chunk blending weight:
+    
+        final_score[i] = conf[i] * rag_score[i] + (1 - conf[i]) * titan_score[i]
+    
+    Unlike V1 (HybridRAG) which uses a single global memory confidence to
+    adjust weights for ALL chunks equally, V2 assigns each chunk its own
+    RAG-vs-Titan ratio based on the trained scorer model.
+    """
+    
+    def __init__(self, embedder, llm_generator, titan_rag, scorer=None,
+                 base_bm25_weight: float = 0.4,
+                 base_embed_weight: float = 0.6,
+                 multihop: bool = False):
+        super().__init__(embedder, llm_generator, multihop=multihop)
+        self.titan_rag = titan_rag
+        self.scorer = scorer
+        self.bm25_weight = base_bm25_weight
+        self.embed_weight = base_embed_weight
+        
+    def retrieve(self, question: str, documents: List[str],
+                 doc_embeddings: torch.Tensor, topk: int = 5) -> Tuple[str, Dict]:
+        """
+        Per-chunk soft routing retrieval.
+        
+        1. Compute RAG scores (BM25 + Embedding) for ALL chunks
+        2. Compute Titan scores (Memory) for ALL chunks
+        3. Get per-chunk confidence from scorer
+        4. Blend: final = conf * rag + (1 - conf) * titan
+        5. Top-K
+        """
+        dim = self.embedder.target_dim
+        
+        # Embed question
+        query_emb = self.embedder(question)
+        query_flat = query_emb.reshape(-1, dim)
+        query_vec = query_flat.mean(dim=0)
+        
+        # --- STEP 1: Per-chunk confidence from scorer ---
+        if self.scorer is not None:
+            questions_repeated = [question] * len(documents)
+            confidence_np = self.scorer.predict_batch(questions_repeated, documents)
+            confidence = torch.tensor(confidence_np, dtype=torch.float32,
+                                      device=doc_embeddings.device)
+        else:
+            # Fallback: equal blend (0.5 RAG + 0.5 Titan)
+            confidence = torch.full((len(documents),), 0.5,
+                                    device=doc_embeddings.device)
+        
+        with torch.no_grad():
+            # --- STEP 2: RAG scores (BM25 + Embedding) for ALL chunks ---
+            bm25_scores = compute_bm25_scores(question, documents)
+            bm25_scores = bm25_scores.to(doc_embeddings.device)
+            embed_scores = F.cosine_similarity(query_vec.unsqueeze(0), doc_embeddings)
+            
+            rag_scores = (
+                self.bm25_weight * normalize_scores(bm25_scores) +
+                self.embed_weight * normalize_scores(embed_scores)
+            )
+            
+            # --- STEP 3: Titan scores (Memory) for ALL chunks ---
+            memory_output = self.titan_rag.titan.ltm.forward_no_update(query_flat)
+            memory_vec = memory_output.mean(dim=0)
+            titan_scores = F.cosine_similarity(memory_vec.unsqueeze(0), doc_embeddings)
+            
+            # --- STEP 4: Per-chunk soft fusion ---
+            final_scores = (
+                confidence * normalize_scores(rag_scores) +
+                (1 - confidence) * normalize_scores(titan_scores)
+            )
+            
+            # --- STEP 5: Top-K ---
+            topk_values, topk_indices = final_scores.topk(min(topk, len(documents)))
+        
+        # Build context
+        context_lines = [documents[idx] for idx in topk_indices.tolist()]
+        context = "\n\n".join(context_lines)
+        
+        # Per-chunk confidence stats for selected chunks
+        selected_conf = confidence[topk_indices].tolist()
+        avg_conf = confidence.mean().item()
+        
+        return context, {
+            "mode": "AdaptiveHybridRAG",
+            "topk_indices": topk_indices.tolist(),
+            "topk_confidence": [round(c, 3) for c in selected_conf],
+            "avg_confidence": round(avg_conf, 3),
+            "rag_top1": rag_scores.argmax().item(),
+            "titan_top1": titan_scores.argmax().item(),
+            "fused_top1": final_scores.argmax().item()
+        }
+    
+    def online_learn(self, question: str, expected_answer: str):
+        """Learn from Q&A pair (Online Learning).
+        
+        Updates Titan Memory with the question-answer association,
+        improving future memory-guided retrieval for similar questions.
+        """
+        dim = self.embedder.target_dim
+        
+        query_emb = self.embedder(question)
+        query_vec = query_emb.reshape(-1, dim).mean(dim=0, keepdim=True)
+        
+        answer_emb = self.embedder(expected_answer)
+        answer_vec = answer_emb.reshape(-1, dim).mean(dim=0, keepdim=True)
+        
+        self.titan_rag.titan.ltm.forward_with_update(query_vec, answer_vec)
+
+
+def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False,
+                      scorer=None) -> Dict[str, BaseRetriever]:
     """
     Factory function to create all retriever instances.
     
@@ -372,9 +488,10 @@ def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -
         llm_generator: FlanT5Generator instance
         titan_rag: TitanRAG instance (required for TitanOnly and HybridRAG)
         multihop: If True, use multi-hop reasoning prompt (for HotpotQA)
+        scorer: RAGConfidenceScorer instance (optional, for AdaptiveHybridRAG)
     
     Returns:
-        dict: {"pure_rag": PureRAG, "titan_only": TitanOnly, "hybrid": HybridRAG}
+        dict: retriever name -> retriever instance
     """
     retrievers = {
         "pure_rag": PureRAG(embedder, llm_generator, multihop=multihop)
@@ -383,5 +500,6 @@ def create_retrievers(embedder, llm_generator, titan_rag=None, multihop=False) -
     if titan_rag is not None:
         retrievers["titan_only"] = TitanOnly(embedder, llm_generator, titan_rag, multihop=multihop)
         retrievers["hybrid"] = HybridRAG(embedder, llm_generator, titan_rag, multihop=multihop)
-    
+        retrievers["adaptive"] = AdaptiveHybridRAG(embedder, llm_generator, titan_rag,
+                                               scorer=scorer, multihop=multihop)
     return retrievers

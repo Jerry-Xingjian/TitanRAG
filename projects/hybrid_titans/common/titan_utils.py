@@ -26,7 +26,7 @@ else:
         pass
 
 
-def create_titan_rag(dim=256, arch="MAG", window_size=32, memory_depth=3, 
+def create_titan_rag(dim=384, arch="MAG", window_size=32, memory_depth=3, 
                      num_persistent_tokens=4, threshold=0.0,
                      learning_rate=0.01, forgetting_rate=0.0001,
                      device=None):
