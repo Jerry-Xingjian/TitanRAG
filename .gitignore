@@ -21,10 +21,13 @@ env/
 Thumbs.db
 
 # Logs
-*.log
 
 # Project specific (if any temp outputs)
 *.tmp
 
-#
+# SQuAD dataset
+data/processed_squad.py
+data/train.csv
 data/*.json
+data/processed*
+data/hotpot*

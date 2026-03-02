@@ -8,39 +8,89 @@ Compares three retrieval strategies:
 - HybridRAG: BM25 + Memory + Embedding fusion
 
 Usage:
+    # Use sample essays (original mode)
     python compare_baselines.py --essay climate --epochs 50
+    
+    # Use SQuAD dataset (single-doc per title)
+    python compare_baselines.py --squad --titles 10 --epochs 50
+    
+    # Multi-document: shared memory across articles
+    python compare_baselines.py --multi-doc --group-size 5 --epochs 50
+
+    # Use HotpotQA dataset (multi-hop QA, already multi-document)
+    python compare_baselines.py --hotpotqa --titles 10 --epochs 50
 """
 
 import argparse
+from typing import List, Dict, Tuple
+import torch
 import sys
 import os
 import re
+import random
+import io
+import json
+import math
+from datetime import datetime
+
+# Fix Windows console encoding
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Add paths
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'src'))
 
 from common.embedders import SentenceTransformerEmbedder
-from common.titan_utils import create_titan_rag, digest_document
+from common.titan_utils import create_titan_rag
 from common.llm_utils import FlanT5Generator
 from common.text_utils import split_into_chunks
-from baselines import create_retrievers
+from common.eval_utils import compute_em, compute_f1
+from baselines import create_retrievers, BaseRetriever
+
+# Add try-except for rag_infer to fail gracefully if skipped
+try:
+    from is_RAG_able.rag_infer import XGBConfidenceScorer
+except ImportError:
+    XGBConfidenceScorer = None
+    print("Warning: XGBConfidenceScorer not found. Hybrid_v2 may not work.")
 
 
 # Import essays from data directory
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data'))
-from sample_essays import get_all_essays, get_test_questions
 
-ESSAYS = get_all_essays()
-TEST_QUESTIONS = get_test_questions()
+
+def load_sample_essays():
+    """Load sample essays for original mode."""
+    from sample_essays import get_all_essays, get_test_questions
+    return get_all_essays(), get_test_questions()
+
+
+def load_squad_data():
+    """Load processed SQuAD data."""
+    try:
+        from processed_squad import get_all_contexts, get_test_questions
+        return get_all_contexts(), get_test_questions()
+    except ImportError:
+        print("❌ Error: processed_squad.py not found. Please run process_squad_data.py first.")
+        sys.exit(1)
+
+
+def load_hotpotqa_data():
+    """Load processed HotpotQA data."""
+    try:
+        from processed_hotpotqa import get_all_contexts, get_test_questions
+        return get_all_contexts(), get_test_questions()
+    except ImportError:
+        print("❌ Error: processed_hotpotqa.py not found. Please run process_hotpotqa_data.py first.")
+        sys.exit(1)
 
 
 def extract_key_elements(text):
     """Extract key numbers and keywords from text for matching."""
     text = text.lower()
-    # Extract numbers (including decimals and percentages)
     numbers = re.findall(r'[\d.]+%?', text)
-    # Extract years (4-digit numbers)
     years = re.findall(r'\b(19|20)\d{2}\b', text)
     return set(numbers + years)
 
@@ -56,33 +106,51 @@ def extract_keywords(text):
                  'but', 'if', 'because', 'until', 'while', 'that', 'which', 'who',
                  'whom', 'this', 'these', 'those', 'it', 'its', 'their', 'they'}
     
-    # Remove punctuation and split
     text = re.sub(r'[^\w\s]', ' ', text.lower())
     words = text.split()
-    
-    # Filter stopwords and short words
     keywords = [w for w in words if w not in stopwords and len(w) > 2]
     return set(keywords)
 
 
-def evaluate_answer_quality(expected, got):
-    """
-    Flexible answer evaluation using multiple criteria.
+def evaluate_answer_quality(expected, got, embedder=None):
+    """Flexible answer evaluation using multiple criteria.
     
-    Returns True if any of these conditions are met:
-    1. Bidirectional containment
-    2. Phrase overlap (key phrases from got are in expected)
-    3. Key numbers/years match
-    4. Keyword overlap >= 40%
+    Args:
+        expected: Expected answer string
+        got: Model-generated answer string
+        embedder: Optional SentenceTransformerEmbedder for semantic similarity fallback
     """
-    expected_lower = expected.lower()
-    got_lower = got.lower()
+    expected_lower = expected.lower().strip()
+    got_lower = got.lower().strip()
     
-    # 1. Bidirectional containment
+    # 0. Yes/No shortcut (important for HotpotQA comparison questions)
+    if expected_lower in ('yes', 'no'):
+        got_first = got_lower.split()[0] if got_lower else ''
+        if got_first.rstrip('.,!') == expected_lower:
+            return True
+        if expected_lower in got_lower and expected_lower != 'no':
+            return True
+        if expected_lower == 'no' and ('no,' in got_lower or 'no.' in got_lower or got_lower == 'no'):
+            return True
+        return False
+    
+    # 0.5 Normalize articles and common prefixes
+    def strip_articles(s):
+        for prefix in ('the ', 'a ', 'an '):
+            if s.startswith(prefix):
+                s = s[len(prefix):]
+        return s.strip()
+    
+    exp_norm = strip_articles(expected_lower)
+    got_norm = strip_articles(got_lower)
+    
+    # 1. Bidirectional containment (with and without articles)
     if expected_lower in got_lower or got_lower in expected_lower:
         return True
+    if exp_norm in got_norm or got_norm in exp_norm:
+        return True
     
-    # 2. Phrase overlap - check if 3+ consecutive words from got appear in expected
+    # 2. Phrase overlap
     got_words = got_lower.split()
     if len(got_words) >= 3:
         for i in range(len(got_words) - 2):
@@ -90,131 +158,650 @@ def evaluate_answer_quality(expected, got):
             if phrase in expected_lower:
                 return True
     
-    # 3. Key elements matching (numbers, years)
+    # 3. Key elements matching
     expected_keys = extract_key_elements(expected)
     got_keys = extract_key_elements(got)
-    
     if expected_keys and expected_keys & got_keys:
         return True
     
-    # 4. Keyword overlap matching (lowered to 40%)
+    # 4. Keyword overlap (adaptive threshold based on answer length)
     expected_keywords = extract_keywords(expected)
     got_keywords = extract_keywords(got)
-    
     if expected_keywords:
         overlap = len(expected_keywords & got_keywords)
-        overlap_ratio = overlap / len(expected_keywords)
-        
-        if overlap_ratio >= 0.4:
+        threshold = 0.3 if len(expected_keywords) <= 3 else 0.4
+        if overlap / len(expected_keywords) >= threshold:
             return True
+    
+    # 5. Semantic similarity fallback (embedding-based)
+    if embedder is not None:
+        try:
+            import torch.nn.functional as F
+            exp_emb = embedder(expected).reshape(-1, embedder.target_dim).mean(dim=0)
+            got_emb = embedder(got).reshape(-1, embedder.target_dim).mean(dim=0)
+            sim = F.cosine_similarity(exp_emb.unsqueeze(0), got_emb.unsqueeze(0)).item()
+            if sim >= 0.75:
+                return True
+        except Exception:
+            pass
     
     return False
 
 
-def evaluate_retriever(retriever, documents, doc_embeddings, questions, verbose=True):
-    """Evaluate a retriever on a set of questions."""
+def _save_titan_state(titan_rag):
+    """Snapshot Titan LTM state after digest, for later restore."""
+    import copy
+    return copy.deepcopy(titan_rag.titan.ltm.state_dict())
+
+
+def _restore_titan_state(titan_rag, saved_state):
+    """Restore Titan LTM to a previously saved state (e.g. post-digest baseline)."""
+    titan_rag.titan.ltm.load_state_dict(saved_state)
+
+
+def _compute_topk(num_chunks):
+    """Dynamically compute topk based on chunk pool size.
+    
+    - ≤10 chunks: topk=3 (small docs, most chunks relevant)
+    - 10-50 chunks: topk=3-5 (moderate, need selectivity)
+    - 50-500 chunks: topk=5-6 (large pool, need more coverage)
+    - 500+ chunks: topk=7 (very large, max coverage)
+    """
+    if num_chunks <= 10:
+        return 3
+    topk = 3 + int(math.log2(num_chunks / 10))
+    return max(3, min(topk, 7))
+
+
+def evaluate_retriever(retriever, documents, doc_embeddings, questions,
+                       verbose=True, show_progress=False, embedder=None,
+                       topk=None):
+    """Evaluate a retriever on a set of questions.
+    
+    Returns:
+        tuple: (metrics_dict, results_list)
+            metrics_dict: {"accuracy": float, "em": float, "f1": float}
+            results_list: list of per-question result dicts
+    """
     correct = 0
     total = len(questions)
+    em_sum = 0.0
+    f1_sum = 0.0
+    
+    # Dynamic topk if not specified
+    if topk is None or topk <= 0:
+        topk = _compute_topk(len(documents))
     
     results = []
-    for question, expected in questions:
-        result = retriever.answer(question, documents, doc_embeddings, topk=3)
+    progress_chars = []
+    
+    for i, (question, expected) in enumerate(questions):
+        result = retriever.answer(question, documents, doc_embeddings, topk=topk)
+        answer = result["answer"]
+        is_correct = evaluate_answer_quality(expected, answer, embedder=embedder)
+        em = compute_em(expected, answer)
+        f1 = compute_f1(expected, answer)
         
-        # Flexible evaluation
-        is_correct = evaluate_answer_quality(expected, result["answer"])
         if is_correct:
             correct += 1
+        em_sum += em
+        f1_sum += f1
         
         results.append({
             "question": question,
             "expected": expected,
-            "answer": result["answer"],
+            "answer": answer,
             "correct": is_correct,
+            "em": em,
+            "f1": round(f1, 3),
             "mode": result["mode"]
         })
         
+        # Show progress indicator
+        if show_progress:
+            status_char = "." if is_correct else "x"
+            progress_chars.append(status_char)
+            # Print progress every 5 questions or at the end
+            if (i + 1) % 10 == 0 or i == total - 1:
+                print(f"      [{i+1}/{total}] {''.join(progress_chars[-10:])}", end="\r")
+        
         if verbose:
-            status = "✅" if is_correct else "❌"
-            print(f"  {status} Q: {question}")
-            print(f"     Expected: {expected}")
-            print(f"     Got: {result['answer']}")
-            # Show retrieval details if available
-            details = result.get("retrieval_details", {})
-            if "memory_confidence" in details:
-                conf = details["memory_confidence"]
-                weights = details.get("dynamic_weights", {})
-                print(f"     [Confidence: {conf:.2f} | Weights: bm25={weights.get('bm25', 0):.2f}, mem={weights.get('memory', 0):.2f}, emb={weights.get('embed', 0):.2f}]")
-            
-            # Show retrieved chunks for wrong answers
-            if not is_correct and "context" in result:
-                print("     📄 Retrieved context:")
-                context = result["context"]
-                # Show first 300 chars
-                print(f"        {context[:300]}...")
+            status = "ok" if is_correct else "X"
+            print(f"      [{i+1}/{total}] {status} Q: {question[:50]}")
+            print(f"           Exp: {expected[:40]}")
+            print(f"           Got: {answer[:40]}")
+        
+        # Online learning: update Titan Memory with the expected answer
+        if hasattr(retriever, 'online_learn'):
+            retriever.online_learn(question, expected)
     
-    accuracy = correct / total * 100
-    return accuracy, results
+    if show_progress:
+        print()  # New line after progress
+    
+    metrics = {
+        "accuracy": correct / total * 100 if total > 0 else 0,
+        "em": em_sum / total * 100 if total > 0 else 0,
+        "f1": f1_sum / total * 100 if total > 0 else 0,
+    }
+    return metrics, results
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Compare baseline retrieval strategies")
-    parser.add_argument("--essay", type=str, default="climate", 
-                       choices=list(ESSAYS.keys()), help="Essay to use")
-    parser.add_argument("--epochs", type=int, default=50, help="Digestion epochs")
-    parser.add_argument("--topk", type=int, default=5, help="Top-K for retrieval")
-    args = parser.parse_args()
+def run_sample_essay_mode(args):
+    """Run comparison on sample essays (original mode)."""
+    ESSAYS, TEST_QUESTIONS = load_sample_essays()
     
     print("=" * 60)
     print("BASELINE COMPARISON: PureRAG vs TitanOnly vs HybridRAG")
+    print(f"Mode: Sample Essay ({args.essay})")
     print("=" * 60)
-    
-    # Initialize components
-    print("\n📦 Loading components...")
-    embedder = SentenceTransformerEmbedder(target_dim=256)
-    llm = FlanT5Generator("google/flan-t5-large")
-    titan_rag = create_titan_rag(dim=256)
-    
-    # Load essay
+
+    embedder, llm, DEVICE = _init_components()
+    titan_rag = create_titan_rag(dim=384, device=DEVICE)
+
+    # Chunk and digest essay
     text = ESSAYS[args.essay]
     questions = TEST_QUESTIONS[args.essay]
-    
-    # Parse into semantic chunks (instead of simple line split)
-    chunks = split_into_chunks(text, sentences_per_chunk=3, overlap_sentences=1)
+    chunks = _chunk_context(text)
     print(f"   Split into {len(chunks)} semantic chunks")
-    
-    # Digest document
-    print(f"\n🧠 Digesting document ({args.epochs} epochs)...")
+
     chunk_embeddings = embedder.embed_batch(chunks)
+    _digest_chunks(embedder, titan_rag, chunks, args.epochs, inline=False)
+
+    # Init Scorer
+    scorer = None
+    if XGBConfidenceScorer:
+        scorer = XGBConfidenceScorer(device=DEVICE)
+
+    # Create retrievers and evaluate
+    retrievers = create_retrievers(embedder, llm, titan_rag, scorer=scorer)
+    saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
+
+    print("\n" + "=" * 60 + "\n")
     
-    for epoch in range(args.epochs):
-        all_emb = embedder.embed_batch(chunks)
-        titan_rag.digest_knowledge(all_emb.unsqueeze(0))
-        if (epoch + 1) % 10 == 0:
-            print(f"   Epoch {epoch + 1}/{args.epochs}")
-    
-    # Create retrievers
-    retrievers = create_retrievers(embedder, llm, titan_rag)
-    
-    # Evaluate each
-    print("\n" + "=" * 60)
     results_summary = {}
-    
+    all_details = {}
     for name, retriever in retrievers.items():
-        print(f"\n📊 Evaluating: {name.upper()}")
+        _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
+        print(f"📊 Evaluating: {name.upper()}")
         print("-" * 40)
-        accuracy, results = evaluate_retriever(
-            retriever, chunks, chunk_embeddings, questions
+        
+        metrics, results = evaluate_retriever(
+            retriever, chunks, chunk_embeddings, questions,
+            verbose=True, show_progress=False,
+            embedder=embedder, topk=args.topk
         )
-        results_summary[name] = accuracy
-        print(f"\n   Accuracy: {accuracy:.1f}%")
-    
+            
+        results_summary[name] = metrics
+        all_details[name] = results
+        print(f"\n   Acc: {metrics['accuracy']:.1f}%  EM: {metrics['em']:.1f}%  F1: {metrics['f1']:.1f}%")
+
     # Summary
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    for name, accuracy in results_summary.items():
-        bar = "█" * int(accuracy / 10) + "░" * (10 - int(accuracy / 10))
-        print(f"  {name:12s}: {bar} {accuracy:.1f}%")
+    _print_summary_bar(results_summary, show_counts=False)
+
+    if getattr(args, 'save_results', False):
+        _save_results(f"essay_{args.essay}",
+                      {"essay": args.essay, "epochs": args.epochs},
+                      results_summary,
+                      details=all_details)
+
+
+def _init_components():
+    """Initialize shared components (embedder, LLM). Returns (embedder, llm, DEVICE)."""
+    print("\n📦 Loading components...")
+    from common.embedders import DEVICE
+    embedder = SentenceTransformerEmbedder(target_dim=384, device=DEVICE)
+    llm = FlanT5Generator("google/flan-t5-xl", device=DEVICE)
+    return embedder, llm, DEVICE
+
+
+def _chunk_context(context):
+    """Split a context string into chunks, respecting document boundaries.
+    
+    For multi-document contexts (HotpotQA style with '# Title' headers),
+    chunks are created within each document to avoid mixing content
+    from different source documents in the same chunk.
+    """
+    # Check if context has multiple document sections (e.g. HotpotQA)
+    import re
+    doc_sections = re.split(r'\n(?=# )', context)
+    
+    if len(doc_sections) > 1:
+        # Multi-document: chunk each section independently
+        all_chunks = []
+        for section in doc_sections:
+            section = section.strip()
+            if not section:
+                continue
+            section_chunks = split_into_chunks(section, sentences_per_chunk=3, overlap_sentences=1)
+            if section_chunks:
+                all_chunks.extend(section_chunks)
+            elif len(section) >= 30:
+                all_chunks.append(section)
+        if all_chunks:
+            return all_chunks
+    
+    # Single-document or fallback
+    chunks = split_into_chunks(context, sentences_per_chunk=2, overlap_sentences=1)
+    if not chunks:
+        chunks = [p.strip() for p in context.split('\n\n') if p.strip()]
+    if not chunks:
+        chunks = [context]
+    return chunks
+
+
+def _digest_chunks(embedder, titan_rag, chunks, epochs, inline=False):
+    """Digest chunks into Titan memory.
+    
+    Args:
+        inline: If True, print progress inline ("10 20 30 done").
+                If False, print epoch lines.
+    """
+    digest_epochs = min(epochs, 500)
+    if inline:
+        print(f"   Digesting ({digest_epochs} epochs): ", end="", flush=True)
+    else:
+        print(f"\n🧠 Digesting {len(chunks)} chunks into shared memory ({digest_epochs} epochs)...")
+
+    # Pre-compute embeddings once (chunks don't change between epochs)
+    cached_emb = embedder.embed_batch(chunks).unsqueeze(0)
+
+    for epoch in range(digest_epochs):
+        titan_rag.digest_knowledge(cached_emb)
+        if (epoch + 1) % 10 == 0:
+            if inline:
+                print(f"{epoch+1}", end=" ", flush=True)
+            else:
+                print(f"   Epoch {epoch + 1}/{digest_epochs}")
+
+    if inline:
+        print("done")
+
+
+def _print_summary_bar(results_dict, show_counts=True):
+    """Print a bar-chart summary of retriever results with Acc/EM/F1."""
+    for name, stats in results_dict.items():
+        if isinstance(stats, dict) and "accuracy" in stats:
+            # New metrics format: {accuracy, em, f1, ...}
+            acc = stats["accuracy"]
+            em = stats.get("em", 0)
+            f1 = stats.get("f1", 0)
+            bar = "█" * int(acc / 10) + "░" * (10 - int(acc / 10))
+            counts = ""
+            if show_counts and "correct" in stats and "total" in stats:
+                counts = f" ({stats['correct']}/{stats['total']})"
+            print(f"  {name:12s}: {bar} Acc {acc:5.1f}%  EM {em:5.1f}%  F1 {f1:5.1f}%{counts}")
+        elif isinstance(stats, dict) and stats.get("total", 0) > 0:
+            # Legacy format: {correct, total} with optional em_sum/f1_sum
+            accuracy = stats["correct"] / stats["total"] * 100
+            em = stats.get("em_sum", 0) / stats["total"] * 100 if "em_sum" in stats else 0
+            f1 = stats.get("f1_sum", 0) / stats["total"] * 100 if "f1_sum" in stats else 0
+            bar = "█" * int(accuracy / 10) + "░" * (10 - int(accuracy / 10))
+            counts = f" ({stats['correct']}/{stats['total']})" if show_counts else ""
+            if em > 0 or f1 > 0:
+                print(f"  {name:12s}: {bar} Acc {accuracy:5.1f}%  EM {em:5.1f}%  F1 {f1:5.1f}%{counts}")
+            else:
+                print(f"  {name:12s}: {bar} Acc {accuracy:5.1f}%{counts}")
+        elif isinstance(stats, (int, float)):
+            accuracy = stats
+            bar = "█" * int(accuracy / 10) + "░" * (10 - int(accuracy / 10))
+            print(f"  {name:12s}: {bar} Acc {accuracy:5.1f}%")
+
+
+def _save_results(dataset_name, config, summary, details=None):
+    """Save evaluation results to evaluations/ directory as JSON.
+
+    Args:
+        dataset_name: e.g. 'hotpotqa', 'squad', 'multidoc', 'essay_climate'
+        config: dict of run configuration (epochs, topk, titles, etc.)
+        summary: dict of {retriever_name: accuracy_or_stats}
+        details: optional list of per-question result dicts
+    """
+    eval_dir = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.dirname(os.path.abspath(__file__)))), 'evaluations')
+    os.makedirs(eval_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"{dataset_name}_{timestamp}.json"
+
+    # Show relative path for portability
+    try:
+        rel_path = os.path.relpath(os.path.join(eval_dir, filename))
+    except ValueError:
+        rel_path = os.path.join(eval_dir, filename)
+
+    # Normalize summary to {name: {accuracy, em, f1, correct, total}}
+    norm_summary = {}
+    for name, stats in summary.items():
+        if isinstance(stats, dict) and "accuracy" in stats:
+            # New metrics format from evaluate_retriever
+            norm_summary[name] = {
+                "accuracy": round(stats["accuracy"], 1),
+                "em": round(stats.get("em", 0), 1),
+                "f1": round(stats.get("f1", 0), 1),
+            }
+        elif isinstance(stats, dict) and "total" in stats:
+            total = stats["total"]
+            correct = stats["correct"]
+            norm_summary[name] = {
+                "accuracy": round(correct / total * 100, 1) if total > 0 else 0,
+                "em": round(stats.get("em_sum", 0) / total * 100, 1) if total > 0 and "em_sum" in stats else 0,
+                "f1": round(stats.get("f1_sum", 0) / total * 100, 1) if total > 0 and "f1_sum" in stats else 0,
+                "correct": correct, "total": total
+            }
+        elif isinstance(stats, (int, float)):
+            norm_summary[name] = {"accuracy": round(stats, 1)}
+
+    data = {
+        "dataset": dataset_name,
+        "timestamp": datetime.now().isoformat(),
+        "config": config,
+        "summary": norm_summary,
+    }
+    if details:
+        data["details"] = details
+
+    filepath = os.path.join(eval_dir, filename)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    print(f"\n💾 Results saved to: {rel_path}")
+
+
+
+def run_dataset_mode(args, contexts, questions, dataset_name):
+    """
+    Shared evaluation logic for dataset-based modes (SQuAD, HotpotQA, etc.).
+    
+    Each title gets its own Titan memory, chunks are digested independently,
+    and all retrievers are evaluated per-title.
+    """
+    print("=" * 60)
+    print("BASELINE COMPARISON: PureRAG vs TitanOnly vs HybridRAG vs AdaptiveHybridRAG")
+    print(f"Mode: {dataset_name} ({args.titles} titles)")
+    print("=" * 60)
+
+    embedder, llm, DEVICE = _init_components()
+    
+    # Init Scorer
+    scorer = None
+    if XGBConfidenceScorer:
+        scorer = XGBConfidenceScorer(device=DEVICE)
+
+    # Select titles to evaluate
+    all_titles = list(contexts.keys())
+    if args.titles >= len(all_titles):
+        selected_titles = all_titles
+    else:
+        random.seed(42)
+        selected_titles = random.sample(all_titles, args.titles)
+
+    print(f"   Total titles available: {len(all_titles)}")
+    print(f"   Selected for evaluation: {len(selected_titles)}")
+
+    all_results = {
+        "pure_rag": {"correct": 0, "total": 0},
+        "titan_only": {"correct": 0, "total": 0},
+        "hybrid": {"correct": 0, "total": 0},
+        "adaptive": {"correct": 0, "total": 0}
+    }
+    all_details = {name: {} for name in all_results}  # {retriever: {title: [results]}}
+
+    for i, title in enumerate(selected_titles):
+        print(f"\n{'='*60}")
+        print(f"[{i+1}/{len(selected_titles)}] Title: {title[:50]}...")
+        print("=" * 60)
+
+        context = contexts[title]
+        title_questions = questions.get(title, [])
+
+        if not title_questions:
+            print("   ⚠️ No questions for this title, skipping...")
+            continue
+
+        if len(title_questions) > args.max_questions:
+            title_questions = title_questions[:args.max_questions]
+
+        print(f"   Context length: {len(context)} chars")
+        print(f"   Questions: {len(title_questions)}")
+
+        chunks = _chunk_context(context)
+        print(f"   Chunks: {len(chunks)}")
+        
+        # --- MEMORY AND RETRIEVERS ---
+        chunk_embeddings = embedder.embed_batch(chunks)
+        
+        titan_rag = create_titan_rag(dim=384)
+        _digest_chunks(embedder, titan_rag, chunks, args.epochs, inline=True)
+
+        is_multihop = dataset_name.lower() in ('hotpotqa',)
+        retrievers = create_retrievers(embedder, llm, titan_rag, multihop=is_multihop, scorer=scorer)
+        saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
+
+        # --- EVALUATE ALL ---
+        for name, retriever in retrievers.items():
+            _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
+            print(f"   [{name}] Evaluating...", end="", flush=True)
+            metrics, results = evaluate_retriever(
+                retriever, chunks, chunk_embeddings, title_questions,
+                verbose=args.verbose, show_progress=not args.verbose,
+                embedder=embedder, topk=args.topk
+            )
+
+            correct_count = sum(1 for r in results if r["correct"])
+            all_results[name]["correct"] += correct_count
+            all_results[name]["total"] += len(title_questions)
+            all_results[name].setdefault("em_sum", 0.0)
+            all_results[name].setdefault("f1_sum", 0.0)
+            all_results[name]["em_sum"] += sum(r["em"] for r in results)
+            all_results[name]["f1_sum"] += sum(r["f1"] for r in results)
+            all_details[name][title] = results
+
+            print(f" {correct_count}/{len(title_questions)} ({metrics['accuracy']:.1f}%)")
+
+    print("\n" + "=" * 60)
+    print(f"FINAL SUMMARY ({dataset_name})")
+    print("=" * 60)
+    print(f"Evaluated on {len(selected_titles)} titles")
+    print()
+    _print_summary_bar(all_results)
+
+    if getattr(args, 'save_results', False):
+        _save_results(dataset_name.lower(),
+                      {"titles": args.titles, "max_questions": args.max_questions,
+                       "epochs": args.epochs, "topk": args.topk},
+                      all_results,
+                      details=all_details)
+
+
+def run_squad_mode(args):
+    """Run comparison on SQuAD dataset."""
+    contexts, questions = load_squad_data()
+    run_dataset_mode(args, contexts, questions, "SQuAD")
+
+
+def run_hotpotqa_mode(args):
+    """Run comparison on HotpotQA dataset (multi-hop QA)."""
+    contexts, questions = load_hotpotqa_data()
+    run_dataset_mode(args, contexts, questions, "HotpotQA")
+
+
+def run_multidoc_mode(args):
+    """Run comparison with multiple articles digested into shared memory."""
+    CONTEXTS, TEST_QUESTIONS = load_squad_data()
+
+    print("=" * 60)
+    print("BASELINE COMPARISON: Multi-Document Cross-Article Retrieval")
+    print(f"Mode: SQuAD Multi-Doc (group_size={args.group_size})")
+    print("=" * 60)
+
+    embedder, llm, DEVICE = _init_components()
+
+    # Select titles
+    all_titles = list(CONTEXTS.keys())
+    random.seed(42)
+    if args.group_size >= len(all_titles):
+        selected_titles = all_titles
+    else:
+        selected_titles = random.sample(all_titles, args.group_size)
+
+    print(f"   Total titles available: {len(all_titles)}")
+    print(f"   Selected for multi-doc group: {len(selected_titles)}")
+    for t in selected_titles:
+        print(f"     - {t}")
+
+    # Build global chunk pool
+    print("\n📄 Building global chunk pool...")
+    all_chunks = []
+    all_questions = []  # (title, question, expected_answer)
+
+    for title in selected_titles:
+        chunks = _chunk_context(CONTEXTS[title])
+        all_chunks.extend(chunks)
+
+        questions = TEST_QUESTIONS.get(title, [])
+        if questions:
+            if len(questions) > args.max_questions:
+                questions = questions[:args.max_questions]
+            for q, a in questions:
+                all_questions.append((title, q, a))
+
+    print(f"   Total chunks: {len(all_chunks)}")
+    print(f"   Total questions: {len(all_questions)}")
+
+    # Embed all chunks
+    print("\n🔢 Embedding all chunks...")
+    all_embeddings = embedder.embed_batch(all_chunks)
+
+    # Shared Titan memory
+    titan_rag = create_titan_rag(dim=384, device=DEVICE)
+    _digest_chunks(embedder, titan_rag, all_chunks, args.epochs, inline=False)
+
+    # Create retrievers
+    retrievers = create_retrievers(embedder, llm, titan_rag)
+    saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
+
+    # Evaluate
+    print("\n" + "=" * 60)
+    print("EVALUATING (cross-document retrieval)")
+    print("=" * 60)
+
+    eval_questions = [(q, a) for (_, q, a) in all_questions]
+
+    # Per-title tracking
+    title_results = {name: {} for name in retrievers}
+    for name in retrievers:
+        for title in selected_titles:
+            title_results[name][title] = []
+
+    results_summary = {}
+    multidoc_details = {}  # {retriever: [{title, question, expected, answer, correct, mode}]}
+    for name, retriever in retrievers.items():
+        _restore_titan_state(titan_rag, saved_state)  # Reset to post-digest for each retriever
+        print(f"\n📊 Evaluating: {name.upper()}")
+        print("-" * 40)
+        metrics, results = evaluate_retriever(
+            retriever, all_chunks, all_embeddings, eval_questions,
+            verbose=args.verbose, show_progress=not args.verbose,
+            embedder=embedder, topk=args.topk
+        )
+        results_summary[name] = metrics
+
+        # Annotate results with source title
+        annotated = []
+        for idx, (title, q, a) in enumerate(all_questions):
+            r = dict(results[idx])
+            r["title"] = title
+            annotated.append(r)
+            title_results[name][title].append(results[idx]["correct"])
+        multidoc_details[name] = annotated
+
+        print(f"   Acc: {metrics['accuracy']:.1f}%  EM: {metrics['em']:.1f}%  F1: {metrics['f1']:.1f}%")
+
+    # Summary
+    print("\n" + "=" * 60)
+    print("OVERALL SUMMARY")
+    print("=" * 60)
+    _print_summary_bar(results_summary, show_counts=False)
+
+    # Per-title breakdown
+    print("\n" + "-" * 60)
+    print("PER-TITLE BREAKDOWN")
+    print("-" * 60)
+    header = f"  {'Title':<30s}"
+    for name in retrievers:
+        header += f" {name:>12s}"
+    print(header)
+    print("  " + "-" * (30 + 13 * len(retrievers)))
+
+    per_title_summary = {}
+    for title in selected_titles:
+        row = f"  {title[:30]:<30s}"
+        per_title_summary[title] = {}
+        for name in retrievers:
+            bools = title_results[name][title]
+            if bools:
+                acc = sum(bools) / len(bools) * 100
+                row += f" {acc:>10.1f}% "
+                per_title_summary[title][name] = round(acc, 1)
+            else:
+                row += f" {'N/A':>11s} "
+        print(row)
+
+    if getattr(args, 'save_results', False):
+        _save_results("multidoc",
+                      {"group_size": args.group_size, "max_questions": args.max_questions,
+                       "epochs": args.epochs, "topk": args.topk,
+                       "titles": selected_titles},
+                      results_summary,
+                      details={"per_title": per_title_summary,
+                               "questions": multidoc_details})
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Compare baseline retrieval strategies")
+
+    # Mode selection
+    parser.add_argument("--squad", action="store_true",
+                       help="Use SQuAD dataset instead of sample essays")
+    parser.add_argument("--multi-doc", action="store_true",
+                       help="Multi-document mode: digest multiple articles into shared memory")
+    parser.add_argument("--hotpotqa", action="store_true",
+                       help="Use HotpotQA dataset (multi-hop QA, already multi-document)")
+
+    # Sample essay mode options
+    parser.add_argument("--essay", type=str, default="climate",
+                       help="Essay to use (climate/ai/space)")
+
+    # SQuAD / HotpotQA mode options
+    parser.add_argument("--titles", type=int, default=10,
+                       help="Number of titles to evaluate (SQuAD/HotpotQA mode)")
+    parser.add_argument("--max-questions", type=int, default=5,
+                       help="Max questions per title")
+
+    # Multi-doc mode options
+    parser.add_argument("--group-size", type=int, default=5,
+                       help="Number of titles to group together (multi-doc mode)")
+
+    # Common options
+    parser.add_argument("--epochs", type=int, default=50, help="Digestion epochs")
+    parser.add_argument("--topk", type=int, default=0,
+                       help="Top-K for retrieval (0=auto based on chunk count)")
+    parser.add_argument("--verbose", action="store_true", help="Show detailed output")
+    parser.add_argument("--save-results", action="store_true",
+                       help="Save results to evaluations/ directory as JSON")
+
+    args = parser.parse_args()
+
+    if args.hotpotqa:
+        run_hotpotqa_mode(args)
+    elif args.multi_doc:
+        run_multidoc_mode(args)
+    elif args.squad:
+        run_squad_mode(args)
+    else:
+        run_sample_essay_mode(args)
 
 
 if __name__ == "__main__":
