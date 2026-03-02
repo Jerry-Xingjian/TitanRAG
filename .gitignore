@@ -31,3 +31,4 @@ data/train.csv
 data/train-v2.0.json
 data/processed*
 data/hotpot*
+data/*.json
