@@ -1,0 +1,82 @@
+{
+  "dataset": "essay_climate",
+  "timestamp": "2026-03-02T12:14:42.912321",
+  "config": {
+    "essay": "climate",
+    "epochs": 50
+  },
+  "summary": {
+    "hybrid": {
+      "accuracy": 100.0,
+      "em": 14.3,
+      "f1": 74.5
+    }
+  },
+  "details": {
+    "hybrid": [
+      {
+        "question": "What is the current CO2 concentration in the atmosphere?",
+        "expected": "421 parts per million (ppm) in 2023",
+        "answer": "421 parts per million",
+        "correct": true,
+        "em": 0,
+        "f1": 0.727,
+        "mode": "HybridRAG"
+      },
+      {
+        "question": "How much has the global temperature risen since pre-industrial times?",
+        "expected": "approximately 1.1°C",
+        "answer": "1.1°C",
+        "correct": true,
+        "em": 0,
+        "f1": 0.667,
+        "mode": "HybridRAG"
+      },
+      {
+        "question": "What year was the Paris Agreement signed?",
+        "expected": "2015",
+        "answer": "2015",
+        "correct": true,
+        "em": 1,
+        "f1": 1.0,
+        "mode": "HybridRAG"
+      },
+      {
+        "question": "How much have sea levels risen since 1900?",
+        "expected": "about 20 centimeters (8 inches)",
+        "answer": "20 centimeters",
+        "correct": true,
+        "em": 0,
+        "f1": 0.571,
+        "mode": "HybridRAG"
+      },
+      {
+        "question": "Why is climate change primarily caused by human activities?",
+        "expected": "burning of fossil fuels releases greenhouse gases that trap heat",
+        "answer": "burning of fossil fuels",
+        "correct": true,
+        "em": 0,
+        "f1": 0.571,
+        "mode": "HybridRAG"
+      },
+      {
+        "question": "Explain how the greenhouse effect works",
+        "expected": "greenhouse gases trap heat from the sun, creating warming effect",
+        "answer": "gases trap heat from the sun, creating a \"greenhouse effect\" that warms the planet",
+        "correct": true,
+        "em": 0,
+        "f1": 0.8,
+        "mode": "HybridRAG"
+      },
+      {
+        "question": "Describe the main impacts of climate change on ecosystems",
+        "expected": "coral bleaching, species migration, biodiversity loss, and habitat disruption",
+        "answer": "Coral bleaching, species migration, and biodiversity loss",
+        "correct": true,
+        "em": 0,
+        "f1": 0.875,
+        "mode": "HybridRAG"
+      }
+    ]
+  }
+}
