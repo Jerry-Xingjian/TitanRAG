@@ -15,6 +15,9 @@ import sys
 import io
 import traceback
 import urllib.request
+import http.cookiejar
+import zipfile
+import shutil
 from collections import defaultdict
 from typing import List, Dict
 
@@ -22,24 +25,169 @@ from typing import List, Dict
 if hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
+# Google Drive file ID for the official MuSiQue dataset zip
+_GDRIVE_FILE_ID = "1tGdADlNjWFaHLeZZGShh2IRcpO6Lv24h"
+_DEV_JSONL_NAME = "musique_ans_v1.0_dev.jsonl"
+
+
+def _extract_dev_jsonl(zip_path: str, output_path: str):
+    """Extract the dev JSONL file from the official zip archive."""
+    print(f"  - Extracting {_DEV_JSONL_NAME} from zip...")
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        target = None
+        for name in zf.namelist():
+            if name.endswith(_DEV_JSONL_NAME):
+                target = name
+                break
+        if target is None:
+            raise FileNotFoundError(
+                f"{_DEV_JSONL_NAME} not found in zip. Available: {zf.namelist()[:10]}"
+            )
+        with zf.open(target) as src, open(output_path, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+
+
+def _try_gdown(output_path: str) -> bool:
+    """Try downloading via gdown (pre-installed on Colab)."""
+    try:
+        import gdown
+    except ImportError:
+        return False
+
+    print("📥 [1/3] Trying Google Drive via gdown...")
+    tmp_dir = os.path.join(os.path.dirname(output_path), "_musique_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    zip_path = os.path.join(tmp_dir, "musique_data.zip")
+    try:
+        gdown.download(
+            f"https://drive.google.com/uc?id={_GDRIVE_FILE_ID}",
+            zip_path, quiet=False
+        )
+        if not os.path.exists(zip_path) or os.path.getsize(zip_path) < 1000:
+            raise FileNotFoundError("gdown produced no valid file")
+        _extract_dev_jsonl(zip_path, output_path)
+        print("✅ Download via gdown complete!")
+        return True
+    except Exception as e:
+        print(f"⚠️  gdown failed: {e}")
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        return False
+    finally:
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _try_gdrive_urllib(output_path: str) -> bool:
+    """Try downloading from Google Drive using pure urllib."""
+    print("📥 [2/3] Trying Google Drive via urllib...")
+    tmp_dir = os.path.join(os.path.dirname(output_path), "_musique_tmp")
+    os.makedirs(tmp_dir, exist_ok=True)
+    zip_path = os.path.join(tmp_dir, "musique_data.zip")
+    try:
+        base_url = "https://drive.google.com/uc?export=download"
+        cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+        headers = {"User-Agent": "TitanRAG/1.0"}
+
+        url = f"{base_url}&id={_GDRIVE_FILE_ID}"
+        req = urllib.request.Request(url, headers=headers)
+        resp = opener.open(req, timeout=120)
+
+        # Handle large-file confirmation page
+        if "text/html" in resp.headers.get("Content-Type", ""):
+            html = resp.read().decode("utf-8", errors="ignore")
+            resp.close()
+            match = re.search(r'confirm=([0-9A-Za-z_-]+)', html)
+            token = match.group(1) if match else None
+            if not token:
+                for cookie in cj:
+                    if cookie.name.startswith("download_warning"):
+                        token = cookie.value
+                        break
+            if not token:
+                raise RuntimeError("Cannot extract GDrive confirmation token")
+            url = f"{base_url}&id={_GDRIVE_FILE_ID}&confirm={token}"
+            req = urllib.request.Request(url, headers=headers)
+            resp = opener.open(req, timeout=120)
+
+        total = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        with open(zip_path, "wb") as f:
+            while True:
+                chunk = resp.read(8192)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total > 0:
+                    sys.stdout.write(f"\r  - Downloading: {downloaded * 100 // total}%")
+                    sys.stdout.flush()
+        resp.close()
+        if total > 0:
+            print()
+
+        if os.path.getsize(zip_path) < 1000:
+            raise FileNotFoundError("Download produced no valid file")
+
+        _extract_dev_jsonl(zip_path, output_path)
+        print("✅ Download via urllib complete!")
+        return True
+    except Exception as e:
+        print(f"⚠️  urllib Google Drive failed: {e}")
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        return False
+    finally:
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _try_huggingface(output_path: str) -> bool:
+    """Try downloading directly from HuggingFace (may require auth)."""
+    url = "https://huggingface.co/datasets/StonyBrookNLP/musique/resolve/main/data/musique_ans_v1.0_dev.jsonl"
+    print(f"📥 [3/3] Trying HuggingFace: {url}")
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "TitanRAG/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            total = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            with open(output_path, "wb") as f:
+                while True:
+                    chunk = resp.read(8192)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total > 0:
+                        sys.stdout.write(f"\r  - Downloading: {downloaded * 100 // total}%")
+                        sys.stdout.flush()
+        print("\n✅ Download from HuggingFace complete!")
+        return True
+    except Exception as e:
+        print(f"⚠️  HuggingFace failed: {e}")
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        return False
+
 
 def download_musique_dataset(output_path: str):
-    """Automatically download the MuSiQue dataset if it doesn't exist."""
-    # Using the dev set as it's typically the best size for baseline testing
-    url = "https://huggingface.co/datasets/StonyBrookNLP/musique/resolve/main/data/musique_ans_v1.0_dev.jsonl"
-    print(f"📥 Downloading MuSiQue dataset from {url}...")
-    try:
-        def progress_bar(count, block_size, total_size):
-            percent = int(count * block_size * 100 / total_size)
-            sys.stdout.write(f"\r  - Downloading: {percent}%")
-            sys.stdout.flush()
+    """Download MuSiQue dataset from Google Drive (official) or HuggingFace."""
+    # 1. gdown (pre-installed on Colab)
+    if _try_gdown(output_path):
+        return
+    # 2. Pure urllib Google Drive
+    if _try_gdrive_urllib(output_path):
+        return
+    # 3. HuggingFace (may need auth token)
+    if _try_huggingface(output_path):
+        return
 
-        urllib.request.urlretrieve(url, output_path, reporthook=progress_bar)
-        print("\n✅ Download complete!")
-    except Exception as e:
-        print(f"\n❌ Download failed: {str(e)}")
-        print(f"   Please manually download from HuggingFace and save as {output_path}")
-        sys.exit(1)
+    print(f"\n❌ All download methods failed.")
+    print(f"   Please manually download from:")
+    print(f"   https://drive.google.com/file/d/{_GDRIVE_FILE_ID}/view")
+    print(f"   Extract {_DEV_JSONL_NAME} and save as: {output_path}")
+    sys.exit(1)
 
 
 class MuSiQueCleaner:
@@ -138,9 +286,6 @@ class MuSiQueCleaner:
             except Exception as e:
                 self.log_action(sample_id, "skipped", f"error: {str(e)}")
                 continue
-
-        with open("musique_clean_logs.json", 'w', encoding='utf-8') as f:
-            json.dump(self.logs, f, ensure_ascii=False, indent=2)
 
         print(f"🧹 Cleaning completed: {len(data)} original -> {len(self.cleaned_data)} valid retained")
         return self.cleaned_data
