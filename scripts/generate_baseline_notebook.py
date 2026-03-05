@@ -8,7 +8,7 @@ baseline retrieval strategies: PureRAG, TitanOnly, and HybridRAG.
 Structure similar to Titan_Experiment.ipynb:
 1. Install Dependencies
 2. Setup File System (creates all files in one cell)
-3. Run Baseline Comparison (sample essays, SQuAD, or HotpotQA)
+3. Run Baseline Comparison (sample essays, SQuAD, HotpotQA, or MuSiQue)
 
 Usage:
     python3 generate_baseline_notebook.py
@@ -87,7 +87,8 @@ def generate_notebook():
             "1. **Sample Essays Mode**: Use built-in climate/ai/space essays\n",
             "2. **SQuAD Mode**: Use processed SQuAD dataset (single-doc per title)\n",
             "3. **Multi-Doc Mode**: Digest multiple articles into shared memory for cross-document retrieval\n",
-            "4. **HotpotQA Mode**: Multi-hop QA across multiple supporting documents (already multi-document)"
+            "4. **HotpotQA Mode**: Multi-hop QA across multiple supporting documents (already multi-document)\n",
+            "5. **MuSiQue Mode**: Multi-hop QA with 2-4 hop reasoning across 20 paragraphs"
         ]
     })
     
@@ -465,12 +466,112 @@ def generate_notebook():
         "source": hotpotqa_cell_source
     })
 
+    # ===== Cell: Setup MuSiQue Data =====
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 6.5 Setup MuSiQue Dataset (Optional)\n",
+            "\n",
+            "This cell will automatically download and generate the MuSiQue dataset.\n",
+            "MuSiQue is a **multi-hop QA** dataset requiring reasoning across 2-4 hops, ",
+            "with 20 paragraphs per question.\n",
+            "\n",
+            "**Skip this cell if you only want to use other modes.**"
+        ]
+    })
+
+    # Read process_MuSiQue_data.py and embed it
+    process_musique_b64 = get_b64_optional("data/process_MuSiQue_data.py")
+
+    musique_setup_code = [
+        "import os\n",
+        "import base64\n",
+        "\n",
+        "# Check if MuSiQue data already exists\n",
+        "if os.path.exists('data/processed_musique.py'):\n",
+        "    size_mb = os.path.getsize('data/processed_musique.py') / (1024 * 1024)\n",
+        "    print(f'\u2705 MuSiQue dataset already exists ({size_mb:.1f} MB)')\n",
+        "else:\n",
+        "    print('\ud83d\udce5 Setting up MuSiQue dataset...')\n",
+    ]
+
+    if process_musique_b64:
+        musique_setup_code.extend([
+            "    # Write the processing script\n",
+            f"    script_b64 = '{process_musique_b64}'\n",
+            "    os.makedirs('data', exist_ok=True)\n",
+            "    with open('data/process_MuSiQue_data.py', 'wb') as f:\n",
+            "        f.write(base64.b64decode(script_b64))\n",
+            "    \n",
+        ])
+    else:
+        musique_setup_code.append("    # Note: process_MuSiQue_data.py not found locally, ensure it exists in data/\n")
+
+    musique_setup_code.extend([
+        "    print('\u2699\ufe0f Processing MuSiQue data...')\n",
+        "    !python data/process_MuSiQue_data.py\n",
+        "    \n",
+        "    if os.path.exists('data/processed_musique.py'):\n",
+        "        size_mb = os.path.getsize('data/processed_musique.py') / (1024 * 1024)\n",
+        "        print(f'\u2705 MuSiQue dataset generated ({size_mb:.1f} MB)')\n",
+        "    else:\n",
+        "        print('\u274c Failed to generate MuSiQue dataset')\n"
+    ])
+
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": musique_setup_code
+    })
+
+    # ===== Cell: Run MuSiQue Comparison =====
+    musique_exists = os.path.exists("data/processed_musique.py") or os.path.exists("../data/processed_musique.py")
+
+    cells.append({
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": [
+            "## 7. Run Baseline Comparison (MuSiQue)\n",
+            "\n",
+            "This cell runs comparison on the MuSiQue dataset (multi-hop QA, 2-4 hops).\n",
+            "\n",
+            "**Parameters:**\n",
+            "- `--musique`: Enable MuSiQue mode\n",
+            "- `--titles N`: Number of titles to evaluate (default: 10)\n",
+            "- `--max-questions N`: Max questions per title (default: 5)\n",
+            "- `--epochs N`: Digestion epochs (default: 50)\n",
+            "- `--verbose`: Show detailed output"
+        ]
+    })
+
+    musique_cell_source = [
+        "# Run baseline comparison on MuSiQue dataset (multi-hop QA)\n",
+        "\n"
+    ]
+
+    if musique_exists:
+        musique_cell_source.append("!python projects/hybrid_titans/compare_baselines.py --musique --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
+    else:
+        musique_cell_source.append("# Note: MuSiQue data not set up. Run cell 6.5 first to set up MuSiQue.\n")
+        musique_cell_source.append("# !python projects/hybrid_titans/compare_baselines.py --musique --titles 50 --max-questions 5 --epochs 300 --verbose --save-results\n")
+
+    cells.append({
+        "cell_type": "code",
+        "execution_count": None,
+        "metadata": {},
+        "outputs": [],
+        "source": musique_cell_source
+    })
+
     # ===== Cell: Custom Comparison (Optional) =====
     cells.append({
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "## 7. Custom Comparison (Optional)\n",
+            "## 8. Custom Comparison (Optional)\n",
             "\n",
             "Run the comparison with your own parameters."
         ]
@@ -491,7 +592,10 @@ def generate_notebook():
             "# !python projects/hybrid_titans/compare_baselines.py --multi-doc --group-size 10 --max-questions 5 --epochs 50 --verbose\n",
             "\n",
             "# Custom parameters for HotpotQA\n",
-            "# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 20 --max-questions 10 --epochs 300 --verbose"
+            "# !python projects/hybrid_titans/compare_baselines.py --hotpotqa --titles 20 --max-questions 10 --epochs 300 --verbose\n",
+            "\n",
+            "# Custom parameters for MuSiQue\n",
+            "# !python projects/hybrid_titans/compare_baselines.py --musique --titles 20 --max-questions 10 --epochs 300 --verbose"
         ]
     })
     
@@ -500,7 +604,7 @@ def generate_notebook():
         "cell_type": "markdown",
         "metadata": {},
         "source": [
-            "## 8. Download Evaluation Results\n",
+            "## 9. Download Evaluation Results\n",
             "\n",
             "Download saved JSON results from the `evaluations/` directory to your local machine."
         ]

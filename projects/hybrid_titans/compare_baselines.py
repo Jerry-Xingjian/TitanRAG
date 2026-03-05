@@ -19,6 +19,9 @@ Usage:
 
     # Use HotpotQA dataset (multi-hop QA, already multi-document)
     python compare_baselines.py --hotpotqa --titles 10 --epochs 50
+
+    # Use MuSiQue dataset (multi-hop QA, 2-4 hops)
+    python compare_baselines.py --musique --titles 10 --epochs 50
 """
 
 import argparse
@@ -84,6 +87,16 @@ def load_hotpotqa_data():
         return get_all_contexts(), get_test_questions()
     except ImportError:
         print("❌ Error: processed_hotpotqa.py not found. Please run process_hotpotqa_data.py first.")
+        sys.exit(1)
+
+
+def load_musique_data():
+    """Load processed MuSiQue data."""
+    try:
+        from processed_musique import get_all_contexts, get_test_questions
+        return get_all_contexts(), get_test_questions()
+    except ImportError:
+        print("❌ Error: processed_musique.py not found. Please run process_MuSiQue_data.py first.")
         sys.exit(1)
 
 
@@ -575,7 +588,7 @@ def run_dataset_mode(args, contexts, questions, dataset_name):
         titan_rag = create_titan_rag(dim=384)
         _digest_chunks(embedder, titan_rag, chunks, args.epochs, inline=True)
 
-        is_multihop = dataset_name.lower() in ('hotpotqa',)
+        is_multihop = dataset_name.lower() in ('hotpotqa', 'musique')
         retrievers = create_retrievers(embedder, llm, titan_rag, multihop=is_multihop, scorer=scorer)
         saved_state = _save_titan_state(titan_rag)  # Snapshot post-digest baseline
 
@@ -625,6 +638,12 @@ def run_hotpotqa_mode(args):
     """Run comparison on HotpotQA dataset (multi-hop QA)."""
     contexts, questions = load_hotpotqa_data()
     run_dataset_mode(args, contexts, questions, "HotpotQA")
+
+
+def run_musique_mode(args):
+    """Run comparison on MuSiQue dataset (multi-hop QA, 2-4 hops)."""
+    contexts, questions = load_musique_data()
+    run_dataset_mode(args, contexts, questions, "MuSiQue")
 
 
 def run_multidoc_mode(args):
@@ -769,6 +788,8 @@ def main():
                        help="Multi-document mode: digest multiple articles into shared memory")
     parser.add_argument("--hotpotqa", action="store_true",
                        help="Use HotpotQA dataset (multi-hop QA, already multi-document)")
+    parser.add_argument("--musique", action="store_true",
+                       help="Use MuSiQue dataset (multi-hop QA, 2-4 hops)")
 
     # Sample essay mode options
     parser.add_argument("--essay", type=str, default="climate",
@@ -794,7 +815,9 @@ def main():
 
     args = parser.parse_args()
 
-    if args.hotpotqa:
+    if args.musique:
+        run_musique_mode(args)
+    elif args.hotpotqa:
         run_hotpotqa_mode(args)
     elif args.multi_doc:
         run_multidoc_mode(args)
