@@ -72,16 +72,22 @@ class FlanT5Generator:
             question: The question
             context: Context/passage to answer from
             max_new_tokens: Maximum tokens to generate
-            multihop: If True, use multi-hop reasoning prompt (for HotpotQA).
+            multihop: If True, use chain-of-thought multi-hop reasoning prompt.
                       If False, use extractive prompt (for SQuAD).
         
         Returns:
             tuple: (answer, prompt)
         """
         if multihop:
-            prompt = f"""Answer the question based on the context provided.
-Extract specific details: exact numbers, names, dates, and technical terms.
-Provide a concise, direct answer.
+            prompt = f"""Answer the question by connecting facts from different paragraphs.
+
+Think step by step:
+1. Identify what the question is really asking.
+2. Find the first relevant fact in the context.
+3. Use that fact to find the next piece of information.
+4. Chain the facts together to reach the final answer.
+
+Give ONLY the final answer in a few words, not the reasoning.
 
 Context:
 {context}
@@ -103,3 +109,35 @@ Answer:"""
         
         answer = self.generate(prompt, max_new_tokens)
         return answer, prompt
+
+    def extract_bridge_entity(self, question, context, max_new_tokens=50):
+        """
+        Extract the key intermediate entity from context for iterative retrieval.
+        
+        For multi-hop questions like "What company merged with the CEMM developer?",
+        this extracts the bridge entity (e.g., "Compaq") so we can do a second
+        retrieval round with richer context.
+        
+        Args:
+            question: The original multi-hop question
+            context: Context retrieved in the first round
+            max_new_tokens: Maximum tokens to generate
+            
+        Returns:
+            str: Extracted bridge entity or clue, empty string if extraction fails
+        """
+        prompt = f"""Read the context and identify the key entity or fact needed to answer the question.
+Do NOT answer the question. Instead, extract the most important intermediate fact or entity name.
+
+Context:
+{context}
+
+Question: {question}
+
+Key entity or fact:"""
+        
+        entity = self.generate(prompt, max_new_tokens)
+        # Clean up: take only the first line/sentence
+        entity = entity.strip().split('\n')[0].strip().rstrip('.')
+        return entity
+

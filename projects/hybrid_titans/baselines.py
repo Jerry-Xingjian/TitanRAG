@@ -109,10 +109,52 @@ class BaseRetriever:
         """
         Full pipeline: retrieve + generate answer.
         
+        For multihop mode, uses iterative retrieval:
+        1. First retrieval with original question
+        2. Extract bridge entity from initial context
+        3. Second retrieval with augmented query (question + bridge entity)
+        4. Merge contexts and generate final answer
+        
         Returns:
             dict: {"answer": str, "context": str, "retrieval_details": dict}
         """
-        context, details = self.retrieve(question, documents, doc_embeddings, topk)
+        # Round 1: Retrieve with original question
+        context_r1, details = self.retrieve(question, documents, doc_embeddings, topk)
+        
+        # For multihop: iterative retrieval with bridge entity
+        if self.multihop:
+            bridge = self.llm.extract_bridge_entity(question, context_r1)
+            
+            if bridge and len(bridge) > 2:
+                # Round 2: Retrieve with augmented query
+                augmented_query = f"{question} {bridge}"
+                context_r2, details_r2 = self.retrieve(
+                    augmented_query, documents, doc_embeddings, topk
+                )
+                
+                # Merge contexts (deduplicate chunks)
+                r1_chunks = set(context_r1.split("\n\n"))
+                r2_chunks = context_r2.split("\n\n")
+                new_chunks = [c for c in r2_chunks if c not in r1_chunks]
+                
+                if new_chunks:
+                    # Combine: R1 chunks + new R2 chunks (limit total to avoid prompt overflow)
+                    merged = context_r1 + "\n\n" + "\n\n".join(new_chunks[:topk])
+                    context = merged
+                else:
+                    context = context_r1
+                
+                details["iterative"] = {
+                    "bridge_entity": bridge,
+                    "r2_new_chunks": len(new_chunks),
+                    "r2_indices": details_r2.get("topk_indices", [])
+                }
+            else:
+                context = context_r1
+                details["iterative"] = {"bridge_entity": None, "skipped": True}
+        else:
+            context = context_r1
+        
         answer, prompt = self.llm.generate_qa(question, context, max_new_tokens,
                                                 multihop=self.multihop)
         
