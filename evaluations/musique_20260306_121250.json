@@ -1,0 +1,669 @@
+{
+  "dataset": "musique",
+  "timestamp": "2026-03-06T12:12:50.869280",
+  "config": {
+    "titles": 50,
+    "max_questions": 5,
+    "epochs": 300,
+    "topk": 0
+  },
+  "summary": {
+    "pure_rag": {
+      "accuracy": 0,
+      "em": 0,
+      "f1": 0,
+      "correct": 0,
+      "total": 0
+    },
+    "titan_only": {
+      "accuracy": 0,
+      "em": 0,
+      "f1": 0,
+      "correct": 0,
+      "total": 0
+    },
+    "hybrid": {
+      "accuracy": 43.1,
+      "em": 19.0,
+      "f1": 29.5,
+      "correct": 25,
+      "total": 58
+    },
+    "adaptive": {
+      "accuracy": 0,
+      "em": 0,
+      "f1": 0,
+      "correct": 0,
+      "total": 0
+    }
+  },
+  "details": {
+    "pure_rag": {},
+    "titan_only": {},
+    "hybrid": {
+      "No Tears Left to Cry and One Last Time (Ariana Grande song)": [
+        {
+          "question": "Who stars alongside the songwriter of \"No Tears Left to Cry\" in the music video for \"one last time\"?",
+          "expected": "Matt Bennett",
+          "answer": "Matt Bennett",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "CEMM and Dell": [
+        {
+          "question": "What company merged in 2002 with the CEMM developer?",
+          "expected": "Hewlett Packard",
+          "answer": "Compaq",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Second City derby and 1894–95 FA Cup and Terry Twell": [
+        {
+          "question": "When was the last time the team that Terry Twell was a member of beat the 194-95 winner of the FA Cup?",
+          "expected": "1 December 2010",
+          "answer": "1995",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Sanjiang Church and Zhu Qinan": [
+        {
+          "question": "In which county was Zhu Qinan born?",
+          "expected": "Yongjia County",
+          "answer": "Zhejiang",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Switzerland and Francis Travis": [
+        {
+          "question": "How many students attend the school that granted Francis Travis a Ph.D.?",
+          "expected": "nearly 25,000",
+          "answer": "2,750",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "St. Matthew Island and Bering Sea": [
+        {
+          "question": "What is the body of water that St. Matthew Island located in named after?",
+          "expected": "Vitus Bering",
+          "answer": "Bering Sea",
+          "correct": true,
+          "em": 0,
+          "f1": 0.5,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Smallville and Hawkgirl": [
+        {
+          "question": "Who is the show Hawkgirl is from by?",
+          "expected": "Alfred Gough",
+          "answer": "Hanna-Barbera",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Florida International University College of Law and Carlos Alvarez (professor)": [
+        {
+          "question": "What is the U.S. News ranking of the law school at Carlos Alvarez's employer?",
+          "expected": "100",
+          "answer": "18th nationally",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Belgrade (film) and Josip Broz Tito and Media in Pristina et al": [
+        {
+          "question": "The language of a film titled and about the city where Tito was interred is the co-official language of a county. In what city is the national Radio and Television broadcaster for that country?",
+          "expected": "Pristina",
+          "answer": "Belgrade",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Eugene V. Debs and 1920 United States presidential election": [
+        {
+          "question": "What political party was the candidate who garnered a million votes during the 1920 election despite being in prison, a member of?",
+          "expected": "Socialist Party of America",
+          "answer": "Socialist Party",
+          "correct": true,
+          "em": 0,
+          "f1": 0.667,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Yeh Raaste Hain Pyaar Ke and Anil Devgan": [
+        {
+          "question": "What film features Anil Devgan's sibling?",
+          "expected": "Yeh Raaste Hain Pyaar Ke",
+          "answer": "Raju Chacha",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Chaya Mushka Schneersohn and Menachem Mendel Schneerson": [
+        {
+          "question": "Who is daughter to the third Rebbe of Chabad Lubavitch, named after his father?",
+          "expected": "Dovber Schneuri",
+          "answer": "Chaya Mushka Schneerson",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Heian period and Shu Yu of Tang": [
+        {
+          "question": "Who is the sibling of Shu Yu from the Chinese capital that Kanmu modeled his government after?",
+          "expected": "King Cheng of Zhou",
+          "answer": "Prince Yu",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Grown Ups (film) and The Chosen One (2010 film)": [
+        {
+          "question": "In Grown Ups, who plays the wife of the actor who produced The Chosen One?",
+          "expected": "Joyce Van Patten",
+          "answer": "Maggie Smith",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Szlachta and Warsaw": [
+        {
+          "question": "What's the largest med school in what was the nobilities commonwealth?",
+          "expected": "Medical University of Warsaw",
+          "answer": "Europe",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Mach number and Vinko Dvořák": [
+        {
+          "question": "Who is the employer of the physicist who Mach number is named after?",
+          "expected": "Charles University",
+          "answer": "Austrian",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Queen (band) and The Godfather Part II": [
+        {
+          "question": "In The Godfather, who does the actor producing the Freddie Mercury film play?",
+          "expected": "Vito Corleone",
+          "answer": "Fredo Corleone",
+          "correct": true,
+          "em": 0,
+          "f1": 0.5,
+          "mode": "HybridRAG"
+        },
+        {
+          "question": "The Freddie Mercury film's producer played who in Godfather 2?",
+          "expected": "Vito Corleone",
+          "answer": "Vito Corleone",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "J. P. Hayes and Pulaski High School and John C. Petersen et al": [
+        {
+          "question": "What is the seat of the county sharing a border with the county in which J. P. Hayes was born?",
+          "expected": "Green Bay",
+          "answer": "Green Bay",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Magic (Smash Mouth album) and So Insane": [
+        {
+          "question": "What was the record label of the record label of So Insane?",
+          "expected": "429 Records",
+          "answer": "Asian Man Records",
+          "correct": true,
+          "em": 0,
+          "f1": 0.4,
+          "mode": "HybridRAG"
+        }
+      ],
+      "History of Saudi Arabia and Geography of Saudi Arabia and Israel et al": [
+        {
+          "question": "When was the region that lies to the north of where Israel is located and the location of Operation Earnest Will established?",
+          "expected": "1930",
+          "answer": "1948",
+          "correct": true,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Bernard Lowe and Second City derby and 1894–95 FA Cup": [
+        {
+          "question": "When was the last time the team who Bernard Lowe was a member of beat the winner of the 1894-95 FA Cup?",
+          "expected": "1 December 2010",
+          "answer": "1980",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Miss Sara Sampson and Emilia Galotti": [
+        {
+          "question": "What is another notable work made by the author of Miss Sara Sampson?",
+          "expected": "Emilia Galotti",
+          "answer": "Miss Mousie's Blind Date",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Neutron and James Chadwick": [
+        {
+          "question": "What was the person who discovered that nuclei of atoms contained neutrons with no charge a participant in?",
+          "expected": "Manhattan Project",
+          "answer": "History of nuclear weapons",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Belgrade (film) and Serbian language and Slavko Šurdonja et al": [
+        {
+          "question": "When did the country whose co-official language was used in the show named for the place Slavko Surdonja died first attend the Olympics games as an independent team?",
+          "expected": "2016",
+          "answer": "1994",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Middle Ages and Charlemagne and Sylvester": [
+        {
+          "question": "What was the language from which the last name Sylvester originated during the era of the person crowned emperor of the west in 800 CE later known as?",
+          "expected": "Medieval Latin",
+          "answer": "Latin",
+          "correct": true,
+          "em": 0,
+          "f1": 0.667,
+          "mode": "HybridRAG"
+        },
+        {
+          "question": "What was the language that the last name Sylvester comes from, used in the era of the individual crowned Roman Emperor in A.D. 800, later known as?",
+          "expected": "Medieval Latin",
+          "answer": "Latin",
+          "correct": true,
+          "em": 0,
+          "f1": 0.667,
+          "mode": "HybridRAG"
+        }
+      ],
+      "1894–95 FA Cup and Second City derby and Alan O'Neill (footballer, born 1973)": [
+        {
+          "question": "When was the last time the sports team Alan O'Neil was a member of beat the winner of the 1894-95 FA cup?",
+          "expected": "1 December 2010",
+          "answer": "1983",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "A Beautiful Mind (soundtrack) and Paul Bettany": [
+        {
+          "question": "Who is the spouse of the actor that plays vision in avengers age of ultron?",
+          "expected": "Jennifer Connelly",
+          "answer": "Scarlett Johansson",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        },
+        {
+          "question": "Who is the spouse of the actor that plays Jarvis in the Avengers Age of Ultron?",
+          "expected": "Jennifer Connelly",
+          "answer": "Natasha Romanova",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        },
+        {
+          "question": "Who is the spouse of the actor who plays Jarvis in Iron Man?",
+          "expected": "Jennifer Connelly",
+          "answer": "Natasha Romanova",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        },
+        {
+          "question": "Who is the spouse of the actor who plays Vision in the new Avengers movie?",
+          "expected": "Jennifer Connelly",
+          "answer": "Cate Shortland",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Saint Helena and Francis Watson (cricketer)": [
+        {
+          "question": "When was the importation of slaves banned in the birthplace of Francis Watson?",
+          "expected": "1792",
+          "answer": "1792",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Minneapolis and Ohio River and Jucy Lucy": [
+        {
+          "question": "Where does the body of water by the city home to the Juicy Lucy and the Ohio River meet?",
+          "expected": "at the city of Cairo, Illinois",
+          "answer": "Davis Island Lock and Dam Site",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Katharine Smith Salisbury and History of Joseph Smith by His Mother": [
+        {
+          "question": "Who is the mother of Katharine Smith Salisbury's brother?",
+          "expected": "Lucy Mack Smith",
+          "answer": "Yvonne Bailey",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Thrill of a Lifetime (album) and King Kobra III": [
+        {
+          "question": "What is the record label of the Thrill of a Lifetime performer?",
+          "expected": "New Renaissance Records",
+          "answer": "Capitol Records",
+          "correct": true,
+          "em": 0,
+          "f1": 0.4,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Imperialism and Yuri Kleschev and Korean War": [
+        {
+          "question": "Where did who argued that the country of citizenship of Yuri Kleschev had itself become an imperialist power declare that he would intervene in the Korean conflict?",
+          "expected": "the Politburo",
+          "answer": "4 August 1950",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Femme nue couchée and Gustave Courbet": [
+        {
+          "question": "When was the painter of Femme nue couchée born?",
+          "expected": "10 June 1819",
+          "answer": "1819",
+          "correct": true,
+          "em": 0,
+          "f1": 0.5,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Nulla in mundo pax sincera and Rialto Bridge and Orlando furioso (Vivaldi, 1714)": [
+        {
+          "question": "What is the name of the famous bridge located in the birthplace of the composer of Nulla in mundo pax sincera?",
+          "expected": "Rialto Bridge",
+          "answer": "Rialto Bridge",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Sylvester and Middle Ages and Germans": [
+        {
+          "question": "What was the version of the language where the last name Sylvester originates, used in the era of the king that united the tribes in the 9th century, later called?",
+          "expected": "Medieval Latin",
+          "answer": "Classical Latin",
+          "correct": true,
+          "em": 0,
+          "f1": 0.5,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Bashir Rafiq and Hindus and Partition of India": [
+        {
+          "question": "In the arabic dictionary what is the meaning of the word that also refers to the majority religion in India during the creation of the country where Rabwah is located?",
+          "expected": "the country of India",
+          "answer": "",
+          "correct": true,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "The King's Speech and George VI": [
+        {
+          "question": "In the King's Speech, who played the person who was the King of England in 1950?",
+          "expected": "Colin Firth",
+          "answer": "Colin Firth",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        },
+        {
+          "question": "Who played king whose regal Name did Albert Adopt in the king's speech?",
+          "expected": "Colin Firth",
+          "answer": "Colin Firth",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "The Black Saint and the Sinner Lady and Desert Diamond West Valley Phoenix Grand Prix and Charles Mingus et al": [
+        {
+          "question": "Who won the Indy Car Race in the largest populated city of the state where the performer of The Black Saint and the Sinner Lady is from?",
+          "expected": "Mario Andretti",
+          "answer": "Logan Gomez",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Warsaw Pact and Szlachta and German reunification": [
+        {
+          "question": "When did the country the top-ranking Warsaw Pact operatives came from, despite it being headquartered in the country known as the nobilities commonwealth, agree to a unified Germany inside NATO?",
+          "expected": "May 1990",
+          "answer": "1990",
+          "correct": true,
+          "em": 0,
+          "f1": 0.667,
+          "mode": "HybridRAG"
+        }
+      ],
+      "FC Barcelona": [
+        {
+          "question": "When was the person who Messi's goals in Copa del Rey compared to get signed by Barcelona?",
+          "expected": "June 1982",
+          "answer": "June 1982",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        },
+        {
+          "question": "How many UEFA Super Cup awards have been received by the team that has won the treble competitions twice?",
+          "expected": "five",
+          "answer": "2",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        },
+        {
+          "question": "In 2009, what series of wins did the team who won the first match in the 1943 Copa del Generalissimo achieve?",
+          "expected": "continental treble",
+          "answer": "the continental treble consisting of La Liga, Copa del Rey, and the UEFA Champions League",
+          "correct": true,
+          "em": 0,
+          "f1": 0.267,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Beyoncé and Is She Really Going Out with Him? and The Jacksons: An American Dream": [
+        {
+          "question": "Who played who sang is she really going out with him in the who influenced Beyonce movie?",
+          "expected": "Lawrence Hilton - Jacobs",
+          "answer": "Joe Jackson",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Sanctuary (Charlie Musselwhite album) and Charlie Musselwhite": [
+        {
+          "question": "What record label is responsible for the performer of \"Sanctuary\"?",
+          "expected": "Kicking Mule Records",
+          "answer": "Real World",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Warner Records and Powers of Ten (album) and The Tri-Tone Fascination": [
+        {
+          "question": "Who owns the record label that The Tri-Tone Fascination's performer belongs to?",
+          "expected": "Warner Music Group",
+          "answer": "Larry Norman",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Pope John XXIII and The Martyrdom of Saint Lawrence (Titian) and Flora (Titian)": [
+        {
+          "question": "Why did Roncalli leave the city where the creator of Flora died?",
+          "expected": "for the conclave in Rome",
+          "answer": "for the conclave in Rome",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Kanye West and Terminator (character)": [
+        {
+          "question": "What was the name of the law passed by the actor from Terminator?",
+          "expected": "\"Donda West Law\"",
+          "answer": "Donda West Law",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "The Motorcycle Diaries (film) and San Clemente, Chile": [
+        {
+          "question": "In which province is San Clemente, from the country where Fuser and Alberto meet the indigenous couple who were traveling to look for work?",
+          "expected": "Talca Province",
+          "answer": "Talca Province",
+          "correct": true,
+          "em": 1,
+          "f1": 1.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "2012–13 Houston Rockets season and List of National Basketball Association annual scoring leaders": [
+        {
+          "question": "What team drafted the winner of the NBA scoring title this year?",
+          "expected": "Oklahoma City Thunder",
+          "answer": "Orlando Magic",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Acornsoft and Labyrinth (1984 video game)": [
+        {
+          "question": "What year did the publisher of Labyrinth end?",
+          "expected": "1986",
+          "answer": "2007",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Warner Records and Shake What God Gave Ya and Sunset Man": [
+        {
+          "question": "Who owns the record label of the Shake What God Gave Ya performer?",
+          "expected": "Warner Music Group",
+          "answer": "Warner Bros.",
+          "correct": true,
+          "em": 0,
+          "f1": 0.4,
+          "mode": "HybridRAG"
+        }
+      ],
+      "Freikorps and Free State of Mecklenburg-Schwerin": [
+        {
+          "question": "Who constituted the free corps in the country that the Free State of Mecklenburg-Schwerin is located in?",
+          "expected": "consisting largely of World War I veterans",
+          "answer": "the National Assembly",
+          "correct": false,
+          "em": 0,
+          "f1": 0.0,
+          "mode": "HybridRAG"
+        }
+      ]
+    },
+    "adaptive": {}
+  }
+}
