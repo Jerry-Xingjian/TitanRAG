@@ -79,15 +79,8 @@ class FlanT5Generator:
             tuple: (answer, prompt)
         """
         if multihop:
-            prompt = f"""Answer the question by connecting facts from different paragraphs.
-
-Think step by step:
-1. Identify what the question is really asking.
-2. Find the first relevant fact in the context.
-3. Use that fact to find the next piece of information.
-4. Chain the facts together to reach the final answer.
-
-Give ONLY the final answer in a few words, not the reasoning.
+            prompt = f"""Answer the question using the context below. The answer may require connecting facts from different paragraphs.
+Extract the specific name, number, date, or entity asked for. Answer in a few words only.
 
 Context:
 {context}
