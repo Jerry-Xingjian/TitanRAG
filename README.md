@@ -1,91 +1,118 @@
 # TitanRAG
 
-Implementation of **Titans: Learning to Memorize at Test Time** (arXiv:2501.00663).
+Implementation and evaluation of **Titans: Learning to Memorize at Test Time** (arXiv:2501.00663), extended for **Retrieval-Augmented Generation (RAG)**.
 
-This project explores the **Titans** architecture, a next-generation neural memory system that learns to memorize historical context *at inference time* (Test-Time Training). We extend this concept to **Retrieval-Augmented Generation (RAG)**, creating a hybrid neuro-symbolic system that "digests" retrieved documents into long-term memory weights.
+TitanRAG explores whether a neural long-term memory that learns *at inference time* can complement — or replace — classical retrieval. We implement the Titans architecture, wrap it for RAG, and benchmark it against strong retrieval baselines on SQuAD 2.0, HotpotQA, and MuSiQue.
 
 ## 🚀 Key Features
 
-*   **Test-Time Training (TTT)**: The `DeepMemoryModule` updates its weights on-the-fly during inference based on "surprise" (prediction error), allowing it to adaptively memorize new information.
-*   **Titans Variants**: Full implementation of all three architectural variants:
-    *   **MAC (Memory As Context)**: Prepends retrieved memory to the context window (RAG-style).
-    *   **MAG (Memory As Gating)**: Fuses Short-Term Attention and Long-Term Memory via a learned gate.
-    *   **MAL (Memory As Layer)**: Processes tokens sequentially through memory before attention.
-*   **TitanRAG**: A specialized wrapper for RAG tasks. It "reads" retrieved documents by training on them for a few epochs before answering questions, effectively "baking" knowledge into the neural weights.
-*   **Hybrid Retrieval**: Combines **Keyword Search (BM25)** + **Neural Memory Search** + **Embedding Search** (Ensemble Fusion) for robust context retrieval.
-*   **Device Agnostic**: Fully supports **TPU (Google Colab)**, **GPU (CUDA)**, and **CPU** execution with automatic detection.
+*   **Test-Time Training (TTT)**: The `DeepMemoryModule` updates its weights on-the-fly during inference based on "surprise" (prediction error), adaptively memorizing new context.
+*   **Titans Variants**: Full implementation of all three architectural variants — **MAC** (Memory as Context), **MAG** (Memory as Gating), and **MAL** (Memory as Layer).
+*   **Retrieval Baselines**: Four strategies in `projects/hybrid_titans/baselines.py`:
+    *   `PureRAG` — BM25 + Embedding fusion
+    *   `TitanOnly` — pure neural-memory retrieval
+    *   `HybridRAG` — BM25 + Memory + Embedding ensemble
+    *   `AdaptiveHybridRAG` — per-chunk soft routing between RAG and Titan signals via a learned scorer
+*   **`is_RAG_able` Classifier**: A lightweight MLP / XGBoost model that predicts, per query, whether RAG retrieval is likely to help — used to drive adaptive routing.
+*   **Multi-Dataset Evaluation**: SQuAD 2.0 (single- and multi-doc), HotpotQA, and MuSiQue processors included.
+*   **Device Agnostic**: TPU (Colab), GPU (CUDA), and CPU, with automatic detection.
 
 ## 📂 Directory Structure
 
 ```
 TitanRAG
-├── src/                    # Core Titans Architecture
-│   └── main.py             # DeepMemoryModule & TitanMAC/MAG/MAL models
-├── data/                   # Data Management
-│   ├── process_squad_data.py # SQuAD v2.0 downloader & processor
-│   ├── processed_squad.py    # Generated SQuAD data file (auto-created)
-│   └── sample_essays.py      # Sample essays for quick demos
-├── projects/               # Experiments & Implementations
-│   └── hybrid_titans/      # Hybrid RAG Implementation
-│       ├── baselines.py    # Retrieval strategies (PureRAG, TitanOnly, Hybrid)
-│       ├── compare_baselines.py # Main evaluation script
-│       ├── common/         # Shared utilities (Embedders, LLM wrappers, TPU helpers)
-│       └── ...
-├── scripts/                # Utility & Notebook Generators
-│   ├── generate_baseline_notebook.py # Generates Baseline_Comparison.ipynb
-│   └── generate_notebook_script.py   # Generates Titan_Experiment.ipynb
-├── notebooks/              # User Notebooks
-│   ├── Baseline_Comparison.ipynb # Main Evaluation Notebook
-│   └── Titan_Experiment.ipynb    # Core Feature Demo
-└── ...
+├── src/                          # Core Titans architecture
+│   ├── main.py                   # DeepMemoryModule + TitanMAC/MAG/MAL
+│   └── main_origin.py            # Reference implementation
+├── data/                         # Dataset processors
+│   ├── process_squad_data.py     # SQuAD v2.0
+│   ├── process_hotpotqa_data.py  # HotpotQA
+│   ├── process_MuSiQue_data.py   # MuSiQue
+│   └── sample_essays.py
+├── projects/
+│   ├── hybrid_titans/            # Main RAG experiments
+│   │   ├── baselines.py          # PureRAG / TitanOnly / Hybrid / AdaptiveHybrid
+│   │   ├── compare_baselines.py  # Main evaluation driver
+│   │   ├── rag_compare.py
+│   │   ├── hybrid_titan_demo.py
+│   │   ├── pure_titan_demo.py
+│   │   ├── essay_rag_demo.py
+│   │   └── common/               # Embedders, LLM wrappers, eval/text/titan utils
+│   └── original_benchmarks/      # Toy tasks (associative recall, etc.)
+├── is_RAG_able/                  # Query-level "is RAG useful?" classifier
+│   ├── generate_rag_label_sq.py  # Label generation on SQuAD
+│   ├── train_test_model.py       # MLP trainer
+│   ├── train_xgboost.py          # XGBoost trainer
+│   ├── rag_infer.py              # Inference-time routing
+│   ├── models/                   # Trained weights (.pt, .pkl)
+│   └── results/                  # Reports
+├── evaluations/                  # Benchmark results (JSON)
+│   ├── Squad2.0 Single-Doc/
+│   ├── Squad2.0 Multi-Doc/       # AdaptiveRAG / Hybrid / RAGonly / TitansOnly × 3 seeds
+│   └── MuSiQue Multi-Doc/
+├── notebooks/
+│   ├── Baseline_Comparison.ipynb
+│   └── Titan_Experiment.ipynb
+├── scripts/                      # Notebook generators, model downloaders
+└── docs/                         # Research plan, roadmap, walkthroughs
 ```
 
 ## 🛠️ Data Preparation
 
-The project uses the **SQuAD v2.0** dataset for evaluation.
+Dataset processors auto-download and serialize each corpus. Run whichever you need:
 
-*   **Automatic**: The scripts (and notebooks) will automatically detect if data is missing and download/process it for you.
-*   **Manual**: You can run the processor manually to generate the dataset file:
-    ```bash
-    python3 data/process_squad_data.py
-    ```
-    This will:
-    1.  Download `train-v2.0.json`.
-    2.  Process it into a clean format.
-    3.  Save it as `data/processed_squad.py` for easy import.
+```bash
+python3 data/process_squad_data.py      # SQuAD v2.0
+python3 data/process_hotpotqa_data.py   # HotpotQA
+python3 data/process_MuSiQue_data.py    # MuSiQue
+```
+
+The evaluation scripts and notebooks will trigger these automatically if the processed files are missing.
 
 ## 📊 Running Baseline Comparison
 
-Compare three retrieval strategies: **PureRAG** (BM25+Embedding), **TitanOnly** (Memory), and **HybridRAG** (All combined).
+Compare the four retrieval strategies on a dataset of your choice:
 
-### 1. 📓 In Google Colab (Recommended)
-This is the easiest way to run the experiments, especially with free **TPU** acceleration.
+```bash
+python3 projects/hybrid_titans/compare_baselines.py
+```
 
-1.  **Generate the Notebook**:
-    Run this local script to package all latest code into a single notebook file:
-    ```bash
-    python3 scripts/generate_baseline_notebook.py
-    ```
-    > Output: `notebooks/Baseline_Comparison.ipynb`
+Results are written as JSON under `evaluations/<dataset>/`. The Multi-Doc SQuAD 2.0 results are reported across three seeds (42 / 52 / 62) for each baseline.
 
-2.  **Run in Colab**:
-    *   Upload `Baseline_Comparison.ipynb` to Google Colab.
-    *   Set Runtime type to **GPU**.
-    *   Run all cells. The notebook handles data setup and installation automatically.
+### In Google Colab
 
-### Running locally (Conda / Anaconda)
-1. Create a virtual environment: `conda create -n titan-env python=3.10`
-2. Activate: `conda activate titan-env`
-3. Install dependencies: `conda install pytorch torchvision torchaudio -c pytorch`
-4. Finish dependencies: `pip install transformers sentence-transformers accelerate`
-5. Remove cache of FlanT5: `rm -rf ~/.cache/huggingface/hub/models--google--flan-t5-large`
+1. Generate the packaged notebook:
+   ```bash
+   python3 scripts/generate_baseline_notebook.py
+   ```
+   Output: `notebooks/Baseline_Comparison.ipynb`
+2. Upload to Colab, set runtime to **GPU** (or **TPU**), and run all cells.
 
-## 🔬 Research & Experiments
+### Running locally (Conda)
 
-*   **[Research Plan (CN)](docs/TitanRAG_Research_Plan_CN.md)**: Detailed roadmap for investigating TitanRAG.
-*   **[Walkthrough: Sparse Update](docs/Walkthrough_Threshold.md)**: Analysis of "Surprise Threshold" for efficient memory updates.
+```bash
+conda create -n titan-env python=3.10 && conda activate titan-env
+conda install pytorch torchvision torchaudio -c pytorch
+pip install transformers sentence-transformers accelerate xgboost scikit-learn
+```
+
+If you hit a stale FLAN-T5 cache:
+```bash
+rm -rf ~/.cache/huggingface/hub/models--google--flan-t5-large
+```
+
+## 🧠 `is_RAG_able`: Query-Level RAG Routing
+
+Not every question benefits from retrieval — sometimes the LLM already knows the answer and retrieval only adds noise. `is_RAG_able/` trains a classifier on SQuAD-derived labels that predicts, per question, whether RAG is likely to help. This signal feeds `AdaptiveHybridRAG` for per-chunk soft routing between retrieved context and Titan memory. See `is_RAG_able/判别模型训练流程说明.md` for the training pipeline.
+
+## 🔬 Research & Docs
+
+*   [Research Roadmap](docs/research_roadmap.md)
+*   [Research Directions](docs/Research_Directions.md)
+*   [Research Plan (CN)](docs/TitanRAG_Research_Plan_CN.md)
+*   [Walkthrough: Surprise Threshold (CN)](docs/Walkthrough_Threshold_CN.md)
 
 ## 📄 Reference
-Based on the paper:
-**Titans: Learning to Memorize at Test Time** (Google Research)
-[https://arxiv.org/pdf/2501.00663v1](https://arxiv.org/pdf/2501.00663v1)
+
+**Titans: Learning to Memorize at Test Time** — Google Research
+<https://arxiv.org/pdf/2501.00663v1>
